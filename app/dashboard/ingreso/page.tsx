@@ -1,0 +1,618 @@
+// app/dashboard/ingreso/page.tsx
+"use client";
+
+import * as XLSX from "xlsx";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { addLoteFIFO, LoteFIFO } from "@/app/utils/fifo";
+
+type IngresoItem = {
+categoria: string;
+categoriaOtro?: string;
+epp: string;
+tallaNumero: string;
+cantidad: number;
+valorUnitario?: number;
+tipoIVA?: "IVA_INCLUIDO" | "MAS_IVA";
+};
+
+type IngresoHistorialRow = {
+fecha: string;
+categoria: string;
+nombre: string;
+talla: string | null;
+cantidad: number;
+valorUnitario: number;
+total: number;
+};
+
+export default function IngresoPage() {
+const router = useRouter();
+const [fileKey, setFileKey] = useState<number>(Date.now());
+const [mensajeCarga, setMensajeCarga] = useState<string | null>(null);
+    
+const [items, setItems] = useState<IngresoItem[]>([
+  {
+    categoria: "",
+    epp: "",
+    tallaNumero: "",
+    cantidad: 1,
+    tipoIVA: "IVA_INCLUIDO",
+  },
+]);
+
+const [historial, setHistorial] = useState<IngresoHistorialRow[]>([]);
+
+const [ordenCampo, setOrdenCampo] = useState<
+  keyof IngresoHistorialRow | null
+>(null);
+const [ordenDireccion, setOrdenDireccion] = useState<
+  "asc" | "desc"
+>("desc");
+
+const ITEMS_POR_HOJA = 20;
+const [pagina, setPagina] = useState(1);
+
+useEffect(() => {
+  const lotes: LoteFIFO[] = JSON.parse(
+    localStorage.getItem("fifoLotes") || "[]"
+  );
+
+  const rows: IngresoHistorialRow[] = lotes.map((l) => {
+    const cantidadInicial =
+      typeof l.cantidadInicial === "number"
+        ? l.cantidadInicial
+        : Number(l.cantidadInicial ?? l.cantidadDisponible ?? 0);
+
+    return {
+      fecha: l.fechaIngreso,
+      categoria: l.categoria,
+      nombre: l.nombreEpp,
+      talla: l.talla,
+      cantidad: cantidadInicial,
+      valorUnitario: l.costoUnitarioIVA,
+      total: cantidadInicial * l.costoUnitarioIVA,
+    };
+  });
+
+  // orden descendente por fecha
+  rows.sort(
+    (a, b) =>
+      new Date(b.fecha).getTime() -
+      new Date(a.fecha).getTime()
+  );
+
+  setHistorial(rows);
+}, []);
+
+const totalPaginas = Math.ceil(
+  historial.length / ITEMS_POR_HOJA
+);
+
+const historialOrdenado = [...historial].sort((a, b) => {
+  if (!ordenCampo) return 0;
+
+  const aVal = a[ordenCampo];
+  const bVal = b[ordenCampo];
+
+  if (typeof aVal === "number" && typeof bVal === "number") {
+    return ordenDireccion === "asc"
+      ? aVal - bVal
+      : bVal - aVal;
+  }
+
+  return ordenDireccion === "asc"
+    ? String(aVal).localeCompare(String(bVal))
+    : String(bVal).localeCompare(String(aVal));
+});
+
+const historialPaginado = historialOrdenado.slice(
+  (pagina - 1) * ITEMS_POR_HOJA,
+  pagina * ITEMS_POR_HOJA
+);
+
+const categorias = [
+  "Cabeza",
+  "Ojos",
+  "Oídos",
+  "Vías respiratorias",
+  "Manos",
+  "Pies",
+  "Cuerpo",
+  "Altura",
+  "Otro",
+];
+
+const updateItem = (
+  index: number,
+  field: keyof IngresoItem,
+  value: any
+) => {
+  const updated = [...items];
+  updated[index] = { ...updated[index], [field]: value };
+  setItems(updated);
+};
+
+const addItem = () => {
+  setItems([
+    ...items,
+    {
+      categoria: "",
+      epp: "",
+      tallaNumero: "",
+      cantidad: 1,
+      tipoIVA: "IVA_INCLUIDO",
+    },
+  ]);
+};
+
+const removeItem = (index: number) => {
+  setItems(items.filter((_, i) => i !== index));
+};
+
+const handleSubmit = (e: React.FormEvent) => {
+  e.preventDefault();
+
+  for (const item of items) {
+    if (!item.categoria || !item.epp || !item.tallaNumero || item.cantidad <= 0) {
+      alert("Completa correctamente todos los EPP del ingreso");
+      return;
+    }
+  }
+
+  try {
+    items.forEach((item) => {
+      if (!item.valorUnitario || !item.tipoIVA) {
+        throw new Error(
+          "Debes ingresar monto unitario y tipo de IVA"
+        );
+      }
+
+      let costoIVA = item.valorUnitario;
+
+      if (item.tipoIVA === "MAS_IVA") {
+        costoIVA = Math.round(item.valorUnitario * 1.19);
+      }
+
+      addLoteFIFO({
+        categoria:
+          item.categoria === "Otro"
+            ? item.categoriaOtro || "Otro"
+            : item.categoria,
+        nombreEpp: item.epp,
+        talla:
+          item.tallaNumero.toLowerCase() === "no aplica"
+            ? null
+            : item.tallaNumero,
+        cantidad: item.cantidad,
+        costoUnitarioIVA: costoIVA,
+      });
+    });
+
+    alert("Ingreso registrado correctamente");
+    router.push("/dashboard/stock");
+  } catch (err: any) {
+    alert(err.message || "Error al registrar ingreso");
+  }
+};
+
+// Helper para obtener el valor de la columna con tolerancia a variantes de encabezado
+const getCell = (row: any, keys: string[]) => {
+  for (const k of keys) {
+    if (row[k] !== undefined && row[k] !== "") {
+      return row[k];
+    }
+  }
+  return "";
+};
+
+/* CARGA MASIVA (real) */
+const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  setMensajeCarga(null);
+
+  const reader = new FileReader();
+
+  reader.onload = (evt) => {
+    const data = evt.target?.result;
+    if (!data) return;
+
+    const workbook = XLSX.read(data, { type: "binary" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    const rows = XLSX.utils.sheet_to_json<any>(sheet, {
+      defval: "",
+    });
+
+    if (rows.length === 0) {
+      alert("El archivo no contiene datos.");
+      return;
+    }
+
+    try {
+      rows.forEach((row, index) => {
+        // Usar getCell para tolerar variantes de encabezado
+        const categoriaRaw = getCell(row, ["Categoría", "Categoria"]);
+        const categoria = categoriaRaw
+          ? categoriaRaw
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .toLowerCase()
+          : "";
+        const nombreEpp = getCell(row, ["Nombre EPP", "EPP", "Nombre"]);
+        const tallaNumeroRaw = getCell(row, ["Talla/Número", "Talla / Número", "Talla"]);
+        const tallaNumero =
+          tallaNumeroRaw && tallaNumeroRaw.length > 0
+            ? tallaNumeroRaw
+            : "No aplica";
+        const cantidad = Number(
+          String(getCell(row, ["Cantidad"]))
+            .replace(/\./g, "")
+            .replace(",", ".")
+        );
+        const montoUnitario = Number(
+          String(getCell(row, ["Monto unitario", "Monto Unitario", "Monto unitario ($)", "Monto"]))
+            .replace(/\./g, "")
+            .replace(",", ".")
+        );
+        const tipoIVARaw = getCell(row, ["Tipo IVA", "Tipo de IVA", "IVA"]);
+        const tipoIVA = tipoIVARaw ? tipoIVARaw.toUpperCase() : "";
+
+        if (
+          !categoria ||
+          !nombreEpp || // EPP libre, solo no vacío
+          isNaN(cantidad) ||
+          cantidad <= 0 ||
+          isNaN(montoUnitario) ||
+          montoUnitario <= 0 ||
+          !["IVAINCLUIDO", "+IVA", "MASIVA"].some((v) =>
+            tipoIVA.replace(/\s/g, "").includes(v)
+          )
+        ) {
+          throw new Error(
+            `Fila ${index + 2}: Revisa cantidad, monto unitario o tipo de IVA`
+          );
+        }
+
+        const categoriasNormalizadas = categorias.map((c) =>
+          c
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+        );
+
+        if (!categoriasNormalizadas.includes(categoria)) {
+          throw new Error(
+            `Fila ${index + 2}: categoría inválida (${categoriaRaw})`
+          );
+        }
+
+        let valorIVAIncluido = montoUnitario;
+
+        if (tipoIVA.includes("MAS") || tipoIVA.includes("+")) {
+          valorIVAIncluido = Math.round(
+            montoUnitario * 1.19
+          );
+        }
+
+        addLoteFIFO({
+          categoria: categoriaRaw,
+          nombreEpp: nombreEpp,
+          talla:
+            String(tallaNumero).toLowerCase() ===
+            "no aplica"
+              ? null
+              : String(tallaNumero),
+          cantidad,
+          costoUnitarioIVA: valorIVAIncluido,
+        });
+      });
+
+      setMensajeCarga(
+        "✔️ Ingreso masivo realizado correctamente. El stock fue actualizado."
+      );
+      setFileKey(Date.now());
+    } catch (err: any) {
+      alert(err.message || "Error en carga masiva");
+    }
+  };
+
+  reader.readAsBinaryString(file);
+};
+
+const handleOrden = (
+  campo: keyof IngresoHistorialRow
+) => {
+  if (ordenCampo === campo) {
+    setOrdenDireccion(
+      ordenDireccion === "asc" ? "desc" : "asc"
+    );
+  } else {
+    setOrdenCampo(campo);
+    setOrdenDireccion("asc");
+  }
+};
+
+return (
+  <div className="max-w-2xl space-y-6">
+    <h1 className="text-2xl font-semibold">Ingreso de EPP</h1>
+
+    {/* INGRESO MANUAL */}
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {items.map((item, index) => {
+        const eppsDisponibles: string[] = [];
+
+        const tallasDisponibles: { id: string; tallaNumero: string }[] = [];
+
+        return (
+          <div key={index} className="rounded border p-3 space-y-2">
+            <select
+              value={item.categoria}
+              onChange={(e) => updateItem(index, "categoria", e.target.value)}
+              className="input"
+            >
+              <option value="">Categoría</option>
+              {categorias.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+
+            {item.categoria === "Otro" && (
+              <input
+                type="text"
+                className="input"
+                placeholder="Especificar categoría"
+                value={item.categoriaOtro || ""}
+                onChange={(e) =>
+                  updateItem(index, "categoriaOtro", e.target.value)
+                }
+              />
+            )}
+
+            <input
+              type="text"
+              value={item.epp}
+              onChange={(e) => updateItem(index, "epp", e.target.value)}
+              className="input"
+              placeholder="Nombre del EPP"
+            />
+
+            <input
+              type="text"
+              value={item.tallaNumero}
+              onChange={(e) => updateItem(index, "tallaNumero", e.target.value)}
+              className="input"
+              placeholder="Talla / Número (o No aplica)"
+            />
+
+            <input
+              type="number"
+              min={1}
+              value={item.cantidad}
+              onChange={(e) =>
+                updateItem(index, "cantidad", Number(e.target.value))
+              }
+              className="input"
+              placeholder="Ingrese cantidad de EPP"
+            />
+
+            <input
+              type="number"
+              min={1}
+              value={item.valorUnitario}
+              onChange={(e) =>
+                updateItem(index, "valorUnitario", Number(e.target.value))
+              }
+              className="input"
+              placeholder="Monto unitario"
+            />
+
+            <select
+              value={item.tipoIVA}
+              onChange={(e) =>
+                updateItem(index, "tipoIVA", e.target.value as any)
+              }
+              className="input"
+            >
+              <option value="IVA_INCLUIDO">IVA incluido</option>
+              <option value="MAS_IVA">+ IVA</option>
+            </select>
+
+            {items.length > 1 && (
+              <button
+                type="button"
+                onClick={() => removeItem(index)}
+                className="text-sm text-red-600 underline"
+              >
+                Quitar EPP
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      <button
+        type="button"
+        onClick={addItem}
+        className="text-sm underline"
+      >
+        ➕ Agregar otro EPP
+      </button>
+
+      <button
+        type="submit"
+        className="w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-700"
+      >
+        Registrar ingreso
+      </button>
+    </form>
+
+    <hr />
+
+    {/* CARGA MASIVA */}
+    <div className="space-y-2">
+      <h2 className="text-lg font-medium">Carga masiva</h2>
+        {mensajeCarga && (
+          <div className="rounded border border-green-300 bg-green-50 p-2 text-sm text-green-800">
+            {mensajeCarga}
+          </div>
+        )}
+
+      <a
+        href="/plantilla_ingreso_epp.xlsx"
+        download
+        className="text-sm underline text-sky-600"
+      >
+        📥 Descargar plantilla
+      </a>
+
+        <div className="space-y-1">
+          <input
+            key={fileKey}
+            type="file"
+            accept=".xlsx,.csv"
+            onChange={handleFileUpload}
+            className="input"
+          />
+
+          <button
+            type="button"
+            onClick={() => setFileKey(Date.now())}
+            className="text-xs text-zinc-500 underline"
+          >
+            Borrar archivo cargado
+          </button>
+        </div>
+
+      <p className="text-xs text-zinc-500">
+        Columnas esperadas (Excel): Categoría | Nombre EPP |{" "}
+        Talla/Número | Cantidad | Monto unitario |{" "}
+        Tipo IVA (IVA incluido / + IVA)
+      </p>
+    </div>
+
+    <h2 className="text-xl font-semibold">
+      Historial de ingresos de EPP
+    </h2>
+
+    <div className="overflow-x-auto rounded border">
+      <table className="w-full border-collapse border border-slate-300 text-sm">
+        <thead>
+          <tr>
+            <th
+              onClick={() => handleOrden("fecha")}
+              className="cursor-pointer border border-slate-300 p-2 text-left"
+            >
+              Fecha {ordenCampo === "fecha" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("categoria")}
+              className="cursor-pointer border border-slate-300 p-2 text-left"
+            >
+              Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("nombre")}
+              className="cursor-pointer border border-slate-300 p-2 text-left"
+            >
+              EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("talla")}
+              className="cursor-pointer border border-slate-300 p-2 text-left"
+            >
+              Talla / Número {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("cantidad")}
+              className="cursor-pointer border border-slate-300 p-2 text-right"
+            >
+              Cantidad {ordenCampo === "cantidad" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("valorUnitario")}
+              className="cursor-pointer border border-slate-300 p-2 text-right"
+            >
+              Valor unitario ($ IVA incl.) {ordenCampo === "valorUnitario" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+            <th
+              onClick={() => handleOrden("total")}
+              className="cursor-pointer border border-slate-300 p-2 text-right"
+            >
+              Total {ordenCampo === "total" && (ordenDireccion === "asc" ? "▲" : "▼")}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {historial.length === 0 && (
+            <tr>
+              <td
+                colSpan={7}
+                className="border border-slate-300 p-4 text-center text-zinc-500"
+              >
+                No hay ingresos registrados
+              </td>
+            </tr>
+          )}
+
+          {historialPaginado.map((row, idx) => (
+            <tr
+              key={idx}
+              className="border border-slate-300 hover:bg-zinc-50"
+            >
+              <td className="p-2 border border-slate-300">
+                {new Date(row.fecha).toLocaleDateString()}
+              </td>
+              <td className="p-2 border border-slate-300">
+                {row.categoria}
+              </td>
+              <td className="p-2 border border-slate-300">
+                {row.nombre}
+              </td>
+              <td className="p-2 border border-slate-300">
+                {row.talla ?? "No aplica"}
+              </td>
+              <td className="p-2 border border-slate-300 text-right">
+                {row.cantidad}
+              </td>
+              <td className="p-2 border border-slate-300 text-right">
+                {row.valorUnitario.toLocaleString("es-CL")}
+              </td>
+              <td className="p-2 border border-slate-300 text-right">
+                {row.total.toLocaleString("es-CL")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="flex items-center justify-between p-2 text-sm">
+        <span>
+          Hoja {pagina} de {totalPaginas || 1}
+        </span>
+
+        <div className="space-x-2">
+          <button
+            disabled={pagina === 1}
+            onClick={() => setPagina((p) => p - 1)}
+            className="rounded border px-2 py-1 disabled:opacity-40"
+          >
+            ← Anterior
+          </button>
+
+          <button
+            disabled={pagina === totalPaginas}
+            onClick={() => setPagina((p) => p + 1)}
+            className="rounded border px-2 py-1 disabled:opacity-40"
+          >
+            Siguiente →
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+}

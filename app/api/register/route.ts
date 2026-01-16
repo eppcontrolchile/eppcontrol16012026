@@ -1,0 +1,194 @@
+// app/api/register/route.ts
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+// 🔹 Validar y normalizar RUT chileno (XXXXXXXX-X)
+function validarYNormalizarRut(rut: string) {
+  const limpio = rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
+
+  if (!/^\d{7,8}[0-9K]$/.test(limpio)) {
+    return null;
+  }
+
+  const cuerpo = limpio.slice(0, -1);
+  const dv = limpio.slice(-1);
+
+  let suma = 0;
+  let multiplo = 2;
+
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += parseInt(cuerpo[i], 10) * multiplo;
+    multiplo = multiplo < 7 ? multiplo + 1 : 2;
+  }
+
+  const resto = 11 - (suma % 11);
+  const dvEsperado =
+    resto === 11 ? "0" : resto === 10 ? "K" : resto.toString();
+
+  if (dv !== dvEsperado) return null;
+
+  return `${cuerpo}-${dv}`;
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+
+    const {
+      companyName,
+      companyRut,
+      companySize,
+      plan,
+      firstName,
+      lastName,
+      email,
+      password,
+    } = body;
+
+    if (
+      !companyName ||
+      !companyRut ||
+      !companySize ||
+      !plan ||
+      !firstName ||
+      !lastName ||
+      !email ||
+      !password
+    ) {
+      return NextResponse.json(
+        { error: "Datos incompletos" },
+        { status: 400 }
+      );
+    }
+
+    const rutNormalizado = validarYNormalizarRut(companyRut);
+
+    if (!rutNormalizado) {
+      return NextResponse.json(
+        { error: "RUT de empresa inválido" },
+        { status: 400 }
+      );
+    }
+      console.log("SERVICE ROLE EXISTS:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+      
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // 1️⃣ Crear usuario Auth
+    const { data: authData, error: authError } =
+      await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+
+    if (authError || !authData.user) {
+      return NextResponse.json(
+        { error: authError?.message || "Error creando usuario" },
+        { status: 400 }
+      );
+    }
+
+    const authUserId = authData.user.id;
+
+    // 2️⃣ Crear empresa
+    const limite =
+      companySize === "25"
+        ? 25
+        : companySize === "50"
+        ? 50
+        : companySize === "100"
+        ? 100
+        : 9999;
+
+    const { data: empresa, error: empresaError } = await supabase
+      .from("empresas")
+      .insert({
+        nombre: companyName,
+        rut: rutNormalizado,
+        plan_tipo: plan,
+        limite_trabajadores: limite,
+        trial_inicio: new Date().toISOString(),
+        trial_fin: new Date(
+          Date.now() + 7 * 24 * 60 * 60 * 1000
+        ).toISOString(),
+        estado_plan: "trial",
+        onboarding_completado: false,
+      })
+      .select()
+      .single();
+
+    if (empresaError || !empresa) {
+      console.error("❌ ERROR CREANDO EMPRESA:", empresaError);
+      return NextResponse.json(
+        {
+          error: "Error creando empresa",
+          detalle: empresaError,
+        },
+        { status: 400 }
+      );
+    }
+
+    // 3️⃣ Crear usuario interno
+    const { data: usuario, error: usuarioError } = await supabase
+      .from("usuarios")
+      .insert({
+        empresa_id: empresa.id,
+        nombre: `${firstName} ${lastName}`,
+        email,
+        auth_user_id: authUserId,
+        activo: true,
+      })
+      .select()
+      .single();
+
+    if (usuarioError || !usuario) {
+      return NextResponse.json(
+        { error: usuarioError?.message || "Error creando usuario interno" },
+        { status: 400 }
+      );
+    }
+
+    // 4️⃣ Obtener rol ADMIN
+    const { data: rolAdmin, error: rolError } = await supabase
+      .from("roles")
+      .select("id")
+      .eq("nombre", "admin")
+      .single();
+
+    if (rolError || !rolAdmin) {
+      return NextResponse.json(
+        { error: "No se encontró el rol admin" },
+        { status: 500 }
+      );
+    }
+
+    // 5️⃣ Asignar rol ADMIN al usuario
+    const { error: usuarioRolError } = await supabase
+      .from("usuarios_roles")
+      .insert({
+        usuario_id: usuario.id,
+        rol_id: rolAdmin.id,
+      });
+
+    if (usuarioRolError) {
+      return NextResponse.json(
+        { error: usuarioRolError.message },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      email,
+      password,
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || "Error inesperado" },
+      { status: 500 }
+    );
+  }
+}
