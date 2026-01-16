@@ -7,6 +7,13 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 let lastSentDate: string | null = null;
 
+function calcularStockTotal(item: any) {
+  return item.lotes?.reduce(
+    (sum: number, l: any) => sum + l.cantidadDisponible,
+    0
+  ) ?? 0;
+}
+
 export async function POST() {
   try {
     const today = new Date().toISOString().slice(0, 10);
@@ -20,9 +27,11 @@ export async function POST() {
     }
 
     const stock = getStock();
-    const criticos = stock.filter(
-      (i) => i.stock <= i.stockCritico
-    );
+
+    const criticos = stock.filter((i) => {
+      const total = calcularStockTotal(i);
+      return total <= i.stockCritico;
+    });
 
     if (criticos.length === 0) {
       return NextResponse.json({
@@ -46,7 +55,9 @@ export async function POST() {
         ${criticos
           .map(
             (c) =>
-              `<li>${c.nombre} (${c.talla ?? "No aplica"}) — Stock: ${c.stock}</li>`
+              `<li>${c.nombre} (${c.talla ?? "No aplica"}) — Stock: ${calcularStockTotal(
+                c
+              )}</li>`
           )
           .join("")}
       </ul>
