@@ -120,12 +120,17 @@ export async function POST(req: Request) {
       .select()
       .single();
 
-    if (empresaError || !empresa) {
-      return NextResponse.json(
-        { error: "Error creando empresa" },
-        { status: 400 }
-      );
-    }
+      if (empresaError || !empresa) {
+        console.error("❌ ERROR CREANDO EMPRESA:", empresaError);
+
+        return NextResponse.json(
+          {
+            error: "Error creando empresa",
+            detalle: empresaError,
+          },
+          { status: 400 }
+        );
+      }
 
     // 3️⃣ Crear usuario interno
     const { data: usuario, error: usuarioError } = await supabaseAdmin
