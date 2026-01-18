@@ -78,11 +78,21 @@ export async function POST(req: Request) {
     );
 
     // 1️⃣ CREAR USUARIO AUTH (FORMA CORRECTA)
-    const { data: signUpData, error: signUpError } =
-      await supabaseAdmin.auth.signUp({
-        email,
-        password,
-      });
+      const { data: authData, error: authError } =
+        await supabaseAdmin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true, // CLAVE
+        });
+
+      if (authError || !authData.user) {
+        return NextResponse.json(
+          { error: authError?.message || "Error creando usuario" },
+          { status: 400 }
+        );
+      }
+
+      const authUserId = authData.user.id;
 
     if (signUpError || !signUpData.user) {
       return NextResponse.json(
