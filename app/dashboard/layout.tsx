@@ -9,7 +9,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // ✅ cookies() ES ASYNC EN NEXT 16
+  // cookies() es async en Next 16
   const cookieStore = await cookies();
 
   const supabase = createServerClient(
@@ -27,13 +27,46 @@ export default async function DashboardLayout({
     }
   );
 
+  // 1️⃣ Validar sesión
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (!session) {
+  if (!user) {
     redirect("/auth/login");
   }
 
-  return <DashboardShell>{children}</DashboardShell>;
+  // 2️⃣ Usuario interno
+  const { data: usuario, error: usuarioError } = await supabase
+    .from("usuarios")
+    .select("rol, empresa_id")
+    .eq("auth_user_id", user.id)
+    .single();
+
+  if (usuarioError || !usuario) {
+    redirect("/auth/login");
+  }
+
+  // 3️⃣ Empresa
+  const { data: empresa, error: empresaError } = await supabase
+    .from("empresas")
+    .select("nombre, rut, plan_tipo")
+    .eq("id", usuario.empresa_id)
+    .single();
+
+  if (empresaError || !empresa) {
+    redirect("/auth/login");
+  }
+
+  // 4️⃣ Render con contexto completo
+  return (
+    <DashboardShell
+      companyName={empresa.nombre}
+      companyRut={empresa.rut}
+      plan={empresa.plan_tipo}
+      rol={usuario.rol}
+    >
+      {children}
+    </DashboardShell>
+  );
 }
