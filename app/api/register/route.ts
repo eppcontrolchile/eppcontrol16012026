@@ -6,9 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 function validarYNormalizarRut(rut: string) {
   const limpio = rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
 
-  if (!/^\d{7,8}[0-9K]$/.test(limpio)) {
-    return null;
-  }
+  if (!/^\d{7,8}[0-9K]$/.test(limpio)) return null;
 
   const cuerpo = limpio.slice(0, -1);
   const dv = limpio.slice(-1);
@@ -62,36 +60,34 @@ export async function POST(req: Request) {
     }
 
     const rutNormalizado = validarYNormalizarRut(companyRut);
-
     if (!rutNormalizado) {
       return NextResponse.json(
         { error: "RUT de empresa inválido" },
         { status: 400 }
       );
     }
-      console.log("SERVICE ROLE EXISTS:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-      
-    const supabase = createClient(
+
+    // Cliente con SERVICE ROLE (solo backend)
+    const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1️⃣ Crear usuario Auth
-    const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
+    // 1️⃣ CREAR USUARIO AUTH (FORMA CORRECTA)
+    const { data: signUpData, error: signUpError } =
+      await supabaseAdmin.auth.signUp({
         email,
         password,
-        email_confirm: true,
       });
 
-    if (authError || !authData.user) {
+    if (signUpError || !signUpData.user) {
       return NextResponse.json(
-        { error: authError?.message || "Error creando usuario" },
+        { error: signUpError?.message || "Error creando usuario" },
         { status: 400 }
       );
     }
 
-    const authUserId = authData.user.id;
+    const authUserId = signUpData.user.id;
 
     // 2️⃣ Crear empresa
     const limite =
@@ -103,7 +99,7 @@ export async function POST(req: Request) {
         ? 100
         : 9999;
 
-    const { data: empresa, error: empresaError } = await supabase
+    const { data: empresa, error: empresaError } = await supabaseAdmin
       .from("empresas")
       .insert({
         nombre: companyName,
@@ -121,18 +117,14 @@ export async function POST(req: Request) {
       .single();
 
     if (empresaError || !empresa) {
-      console.error("❌ ERROR CREANDO EMPRESA:", empresaError);
       return NextResponse.json(
-        {
-          error: "Error creando empresa",
-          detalle: empresaError,
-        },
+        { error: "Error creando empresa" },
         { status: 400 }
       );
     }
 
     // 3️⃣ Crear usuario interno
-    const { data: usuario, error: usuarioError } = await supabase
+    const { data: usuario, error: usuarioError } = await supabaseAdmin
       .from("usuarios")
       .insert({
         empresa_id: empresa.id,
@@ -146,45 +138,26 @@ export async function POST(req: Request) {
 
     if (usuarioError || !usuario) {
       return NextResponse.json(
-        { error: usuarioError?.message || "Error creando usuario interno" },
+        { error: "Error creando usuario interno" },
         { status: 400 }
       );
     }
 
-    // 4️⃣ Obtener rol ADMIN
-    const { data: rolAdmin, error: rolError } = await supabase
+    // 4️⃣ Rol admin
+    const { data: rolAdmin } = await supabaseAdmin
       .from("roles")
       .select("id")
       .eq("nombre", "admin")
       .single();
 
-    if (rolError || !rolAdmin) {
-      return NextResponse.json(
-        { error: "No se encontró el rol admin" },
-        { status: 500 }
-      );
-    }
-
-    // 5️⃣ Asignar rol ADMIN al usuario
-    const { error: usuarioRolError } = await supabase
-      .from("usuarios_roles")
-      .insert({
+    if (rolAdmin) {
+      await supabaseAdmin.from("usuarios_roles").insert({
         usuario_id: usuario.id,
         rol_id: rolAdmin.id,
       });
-
-    if (usuarioRolError) {
-      return NextResponse.json(
-        { error: usuarioRolError.message },
-        { status: 400 }
-      );
     }
 
-    return NextResponse.json({
-      ok: true,
-      email,
-      password,
-    });
+    return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message || "Error inesperado" },
