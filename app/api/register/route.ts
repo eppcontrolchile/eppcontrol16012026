@@ -28,6 +28,10 @@ function validarYNormalizarRut(rut: string) {
   return `${cuerpo}-${dv}`;
 }
 
+function toDateOnly(date: Date) {
+  return date.toISOString().split("T")[0];
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -106,10 +110,10 @@ export async function POST(req: Request) {
         rut: rutNormalizado,
         plan_tipo: plan,
         limite_trabajadores: limite,
-        trial_inicio: new Date().toISOString(),
-        trial_fin: new Date(
-          Date.now() + 7 * 24 * 60 * 60 * 1000
-        ).toISOString(),
+        trial_inicio: toDateOnly(new Date()),
+        trial_fin: toDateOnly(
+          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        ),
         estado_plan: "trial",
         onboarding_completado: false,
       })
