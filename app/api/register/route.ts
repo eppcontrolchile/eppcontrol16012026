@@ -71,37 +71,28 @@ export async function POST(req: Request) {
       );
     }
 
-    // Cliente con SERVICE ROLE (solo backend)
+    // 🔐 Cliente admin (service role)
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1️⃣ CREAR USUARIO AUTH (FORMA CORRECTA)
-      const { data: authData, error: authError } =
-        await supabaseAdmin.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
-        });
+    // 1️⃣ Crear usuario AUTH (ADMIN)
+    const { data: authData, error: authError } =
+      await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
 
-      if (authError || !authData.user) {
-        return NextResponse.json(
-          { error: authError?.message || "Error creando usuario" },
-          { status: 400 }
-        );
-      }
-
-      const authUserId = authData.user.id;
-
-    if (signUpError || !signUpData.user) {
+    if (authError || !authData.user) {
       return NextResponse.json(
-        { error: signUpError?.message || "Error creando usuario" },
+        { error: authError?.message || "Error creando usuario auth" },
         { status: 400 }
       );
     }
 
-    const authUserId = signUpData.user.id;
+    const authUserId = authData.user.id;
 
     // 2️⃣ Crear empresa
     const limite =
@@ -118,7 +109,7 @@ export async function POST(req: Request) {
       .insert({
         nombre: companyName,
         rut: rutNormalizado,
-        plan_tipo: plan,
+        plan_tipo: plan, // standard | advanced
         limite_trabajadores: limite,
         trial_inicio: toDateOnly(new Date()),
         trial_fin: toDateOnly(
@@ -130,17 +121,13 @@ export async function POST(req: Request) {
       .select()
       .single();
 
-      if (empresaError || !empresa) {
-        console.error("❌ ERROR CREANDO EMPRESA:", empresaError);
-
-        return NextResponse.json(
-          {
-            error: "Error creando empresa",
-            detalle: empresaError,
-          },
-          { status: 400 }
-        );
-      }
+    if (empresaError || !empresa) {
+      console.error("❌ ERROR CREANDO EMPRESA:", empresaError);
+      return NextResponse.json(
+        { error: "Error creando empresa" },
+        { status: 400 }
+      );
+    }
 
     // 3️⃣ Crear usuario interno
     const { data: usuario, error: usuarioError } = await supabaseAdmin
@@ -162,7 +149,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4️⃣ Rol admin
+    // 4️⃣ Asignar rol ADMIN
     const { data: rolAdmin } = await supabaseAdmin
       .from("roles")
       .select("id")
