@@ -22,31 +22,32 @@ type Suscripcion = {
 };
 
 function getSuscripcion(): Suscripcion {
+  const fallback: Suscripcion = {
+    plan: "STANDARD",
+    tramo: "25",
+    estado: "Trial",
+    valorPlan: 29990,
+    trabajadoresActivos: 0,
+    limiteTrabajadores: 25,
+    proximoPago: null,
+    pagos: [],
+  };
+
   if (typeof window === "undefined") {
-    return {
-      plan: "STANDARD",
-      tramo: "25",
-      estado: "Trial",
-      valorPlan: 29990,
-      trabajadoresActivos: 0,
-      limiteTrabajadores: 25,
-      proximoPago: null,
-      pagos: [],
-    };
+    return fallback;
   }
 
-  return (
-    JSON.parse(localStorage.getItem("suscripcion")) || {
-      plan: "STANDARD",
-      tramo: "25",
-      estado: "Trial",
-      valorPlan: 29990,
-      trabajadoresActivos: 0,
-      limiteTrabajadores: 25,
-      proximoPago: null,
-      pagos: [],
-    }
-  );
+  const raw = localStorage.getItem("suscripcion");
+
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(raw) as Suscripcion;
+  } catch {
+    return fallback;
+  }
 }
 
 function saveSuscripcion(data: Suscripcion) {
