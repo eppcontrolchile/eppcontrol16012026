@@ -28,6 +28,7 @@ function validarYNormalizarRut(rut: string) {
   return `${cuerpo}-${dv}`;
 }
 
+// 🔹 Convertir Date a YYYY-MM-DD (tipo date en Postgres)
 function toDateOnly(date: Date) {
   return date.toISOString().split("T")[0];
 }
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
       password,
     } = body;
 
+    // 0️⃣ Validaciones básicas
     if (
       !companyName ||
       !companyRut ||
@@ -71,27 +73,42 @@ export async function POST(req: Request) {
       );
     }
 
-    // 🔐 Cliente admin (service role)
+    // 🔹 Normalizar plan según constraint DB
+    const planNormalizado =
+      plan === "advanced"
+        ? "advanced"
+        : plan === "standard"
+        ? "standard"
+        : null;
+
+    if (!planNormalizado) {
+      return NextResponse.json(
+        { error: "Plan inválido" },
+        { status: 400 }
+      );
+    }
+
+    // 🔐 Cliente admin (service role, bypass RLS)
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1️⃣ Crear usuario AUTH (ADMIN)
-    const { data: authData, error: authError } =
+    // 1️⃣ Crear usuario AUTH (signup normal)
+    const { data: signUpData, error: signUpError } =
       await supabaseAdmin.auth.signUp({
         email,
         password,
       });
 
-    if (authError || !authData.user) {
+    if (signUpError || !signUpData.user) {
       return NextResponse.json(
-        { error: authError?.message || "Error creando usuario auth" },
+        { error: signUpError?.message || "Error creando usuario" },
         { status: 400 }
       );
     }
 
-    const authUserId = authData.user.id;
+    const authUserId = signUpData.user.id;
 
     // 2️⃣ Crear empresa
     const limite =
@@ -108,7 +125,7 @@ export async function POST(req: Request) {
       .insert({
         nombre: companyName,
         rut: rutNormalizado,
-        plan_tipo: plan, // standard | advanced
+        plan_tipo: planNormalizado,
         limite_trabajadores: limite,
         trial_inicio: toDateOnly(new Date()),
         trial_fin: toDateOnly(
@@ -164,6 +181,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {
+    console.error("❌ REGISTER ERROR:", err);
     return NextResponse.json(
       { error: err.message || "Error inesperado" },
       { status: 500 }
