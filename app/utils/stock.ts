@@ -61,8 +61,6 @@ export function getCantidadTotal(item: StockItem): number {
 
 /**
  * Agrega stock (Ingreso)
- * - Si existe el item, suma cantidad
- * - Si no existe, lo crea
  */
 export function addStockItem(data: {
   categoria: string;
@@ -110,7 +108,6 @@ export function addStockItem(data: {
 
 /**
  * Descuenta stock (Egreso)
- * - Lanza error si no hay stock suficiente
  */
 export function removeStockItem(data: {
   categoria: string;
@@ -157,7 +154,6 @@ export function removeStockItem(data: {
 
 /**
  * Obtiene solo stock disponible (> 0)
- * Útil para selectores en egreso
  */
 export function getStockDisponible(): StockItem[] {
   return getStock().filter(
@@ -166,13 +162,10 @@ export function getStockDisponible(): StockItem[] {
 }
 
 /**
- * El stock crítico se persiste separado del FIFO.
- * Puede existir aunque aún no haya lotes ingresados.
+ * Actualiza stock crítico por ID (alineado con dashboard)
  */
 export function updateStockCritico(data: {
-  categoria: string;
-  nombre: string;
-  talla: string | null;
+  id: string;
   stockCritico: number;
 }) {
   if (data.stockCritico < 0) {
@@ -181,33 +174,19 @@ export function updateStockCritico(data: {
 
   const stock = getStock();
 
-  const item = stock.find(
-    (s) =>
-      s.categoria === data.categoria &&
-      s.nombre === data.nombre &&
-      s.talla === data.talla
-  );
+  const item = stock.find((s) => s.id === data.id);
 
   if (!item) {
-    // si no existe aún en stockItems, lo creamos SOLO para guardar el crítico
-    stock.push({
-      id: crypto.randomUUID(),
-      categoria: data.categoria,
-      nombre: data.nombre,
-      talla: data.talla,
-      stockCritico: data.stockCritico,
-      lotes: [],
-    });
-  } else {
-    item.stockCritico = data.stockCritico;
+    throw new Error("El item de stock no existe");
   }
+
+  item.stockCritico = data.stockCritico;
 
   saveStock(stock);
 }
 
 /**
  * Obtiene todos los stock críticos configurados
- * key: categoria|nombre|talla
  */
 export function getStockCriticos(): Record<string, number> {
   if (typeof window === "undefined") return {};
