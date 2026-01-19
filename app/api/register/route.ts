@@ -4,27 +4,23 @@ import { createClient } from "@supabase/supabase-js";
 
 // 🔹 Validar y normalizar RUT chileno (XXXXXXXX-X)
 function validarYNormalizarRut(rut: string) {
-  const limpio = rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
+  if (!rut) return null;
 
-  if (!/^\d{7,8}[0-9K]$/.test(limpio)) return null;
+  const limpio = rut
+    .replace(/\./g, "")
+    .replace(/-/g, "")
+    .trim()
+    .toUpperCase();
+
+  // Solo estructura: 7 u 8 dígitos + DV (0-9 o K)
+  if (!/^\d{7,8}[0-9K]$/.test(limpio)) {
+    return null;
+  }
 
   const cuerpo = limpio.slice(0, -1);
   const dv = limpio.slice(-1);
 
-  let suma = 0;
-  let multiplo = 2;
-
-  for (let i = cuerpo.length - 1; i >= 0; i--) {
-    suma += parseInt(cuerpo[i], 10) * multiplo;
-    multiplo = multiplo < 7 ? multiplo + 1 : 2;
-  }
-
-  const resto = 11 - (suma % 11);
-  const dvEsperado =
-    resto === 11 ? "0" : resto === 10 ? "K" : resto.toString();
-
-  if (dv !== dvEsperado) return null;
-
+  // Normalizamos SIEMPRE
   return `${cuerpo}-${dv}`;
 }
 
@@ -94,21 +90,22 @@ export async function POST(req: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1️⃣ Crear usuario AUTH (signup normal)
-    const { data: signUpData, error: signUpError } =
-      await supabaseAdmin.auth.signUp({
+    // 1️⃣ Crear usuario AUTH (ADMIN, password usable)
+    const { data: authData, error: authError } =
+      await supabaseAdmin.auth.admin.createUser({
         email,
         password,
+        email_confirm: true,
       });
 
-    if (signUpError || !signUpData.user) {
+    if (authError || !authData.user) {
       return NextResponse.json(
-        { error: signUpError?.message || "Error creando usuario" },
+        { error: authError?.message || "Error creando usuario" },
         { status: 400 }
       );
     }
 
-    const authUserId = signUpData.user.id;
+    const authUserId = authData.user.id;
 
     // 2️⃣ Crear empresa
     const limite =
