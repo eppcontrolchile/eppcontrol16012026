@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const response = NextResponse.next();
 
-  createServerClient(
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -21,8 +21,9 @@ export function middleware(request: NextRequest) {
     }
   );
 
-  // ❗ No validamos sesión aquí
-  // ❗ Solo sincronizamos cookies
+  // 🔑 ESTA LÍNEA ES LA CLAVE
+  await supabase.auth.getUser();
+
   return response;
 }
 

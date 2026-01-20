@@ -18,11 +18,6 @@ export default async function DashboardLayout({
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cookiesToSet) => {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-          });
-        },
       },
     }
   );
@@ -31,6 +26,8 @@ export default async function DashboardLayout({
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  console.log("DASHBOARD USER:", user);
 
   if (!user) {
     redirect("/auth/login");
@@ -43,6 +40,8 @@ export default async function DashboardLayout({
     .eq("auth_user_id", user.id)
     .single();
 
+  console.log("USUARIO DB:", usuario, usuarioError);
+
   if (usuarioError || !usuario) {
     redirect("/auth/login");
   }
@@ -53,6 +52,8 @@ export default async function DashboardLayout({
     .select("nombre, rut, plan_tipo")
     .eq("id", usuario.empresa_id)
     .single();
+
+  console.log("EMPRESA DB:", empresa, empresaError);
 
   if (empresaError || !empresa) {
     redirect("/auth/login");
