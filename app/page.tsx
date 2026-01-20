@@ -7,35 +7,37 @@ export default function LandingPage() {
     <main className="min-h-screen bg-gradient-to-b from-sky-50 to-white text-zinc-900">
 
       {/* HEADER */}
-      <header className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-        <div className="flex items-center gap-3">
-          <Image
-          src="/logoepp.png"
-          alt="EPP Control"
-          width={420}
-          height={280}
-          className="h-28 w-auto"
-          priority
-          />
-          <span className="font-semibold text-lg">
-            EPP Control
-          </span>
-        </div>
+      <header className="px-6 py-4 max-w-7xl mx-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3 justify-center sm:justify-start">
+            <Image
+              src="/logoepp.png"
+              alt="EPP Control"
+              width={420}
+              height={280}
+              className="h-20 sm:h-28 w-auto"
+              priority
+            />
+            <span className="font-semibold text-lg">
+              EPP Control
+            </span>
+          </div>
 
-        <nav className="flex items-center gap-4">
-          <Link
-            href="/auth/login"
-            className="text-sm font-medium text-zinc-700 hover:text-zinc-900"
-          >
-            Iniciar sesión
-          </Link>
-          <Link
-            href="/auth/register"
-            className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 transition"
-          >
-            Crear cuenta (7 días gratis)
-          </Link>
-        </nav>
+          <nav className="flex items-center justify-center gap-3 flex-wrap">
+            <Link
+              href="/auth/login"
+              className="text-sm font-medium text-zinc-700 hover:text-zinc-900"
+            >
+              Iniciar sesión
+            </Link>
+            <Link
+              href="/auth/register"
+              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 transition"
+            >
+              Crear cuenta (7 días gratis)
+            </Link>
+          </nav>
+        </div>
       </header>
 
       {/* HERO */}
@@ -109,6 +111,10 @@ export default function LandingPage() {
       <strong>7 días de prueba gratis</strong>.
     </p>
 
+    <p className="mb-4 text-sm text-zinc-500">
+      *Todos los precios son mensuales y <strong>no incluyen IVA</strong>.
+    </p>
+
     <div className="grid gap-8 sm:grid-cols-2">
 
       {/* PLAN ESTANDAR */}
@@ -140,7 +146,12 @@ export default function LandingPage() {
 
       {/* PLAN AVANZADO */}
       <div className="rounded-2xl bg-white p-8 shadow-md flex flex-col border-2 border-sky-600">
-        <h3 className="font-semibold text-xl mb-2">Plan Avanzado</h3>
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <h3 className="font-semibold text-xl">Plan Avanzado</h3>
+          <span className="text-xs rounded-full bg-zinc-200 px-3 py-1 text-zinc-700">
+            Próximamente
+          </span>
+        </div>
         <p className="mb-4 text-sm text-zinc-500">
           Para empresas con múltiples roles y mayor control
         </p>
@@ -157,12 +168,12 @@ export default function LandingPage() {
           Precio según cantidad de trabajadores activos.
         </p>
 
-        <Link
-          href="/auth/register?plan=advanced"
-          className="mt-auto rounded-lg bg-sky-600 px-4 py-2 text-white font-medium hover:bg-sky-700 transition"
+        <button
+          disabled
+          className="mt-auto rounded-lg bg-zinc-300 px-4 py-2 text-zinc-600 font-medium cursor-not-allowed"
         >
-          Probar Plan Avanzado
-        </Link>
+          Disponible próximamente
+        </button>
       </div>
 
     </div>
@@ -201,11 +212,11 @@ export default function LandingPage() {
           <tr>
             <td className="p-4 font-medium">Hasta 25 trabajadores</td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$29.990</div>
+              <div className="font-semibold">$44.990</div>
               <div className="text-xs text-zinc-500">1 usuario</div>
             </td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$59.990</div>
+              <div className="font-semibold">$79.990</div>
               <div className="text-xs text-zinc-500">Usuarios + roles</div>
             </td>
           </tr>
@@ -213,11 +224,11 @@ export default function LandingPage() {
           <tr>
             <td className="p-4 font-medium">Hasta 50 trabajadores</td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$44.990</div>
+              <div className="font-semibold">$89.990</div>
               <div className="text-xs text-zinc-500">1 usuario</div>
             </td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$89.990</div>
+              <div className="font-semibold">$129.990</div>
               <div className="text-xs text-zinc-500">Usuarios + roles</div>
             </td>
           </tr>
@@ -225,11 +236,11 @@ export default function LandingPage() {
           <tr>
             <td className="p-4 font-medium">Hasta 100 trabajadores</td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$69.990</div>
+              <div className="font-semibold">$139.990</div>
               <div className="text-xs text-zinc-500">1 usuario</div>
             </td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$139.990</div>
+              <div className="font-semibold">$229.990</div>
               <div className="text-xs text-zinc-500">Usuarios + roles</div>
             </td>
           </tr>
@@ -237,16 +248,19 @@ export default function LandingPage() {
           <tr>
             <td className="p-4 font-medium">Más de 100 trabajadores</td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$99.990</div>
+              <div className="font-semibold">Desde $1.200 / trabajador</div>
               <div className="text-xs text-zinc-500">1 usuario</div>
             </td>
             <td className="p-4 text-center">
-              <div className="font-semibold">$199.990</div>
+              <div className="font-semibold">Desde $2.000 / trabajador</div>
               <div className="text-xs text-zinc-500">Usuarios + roles</div>
             </td>
           </tr>
         </tbody>
       </table>
+      <p className="mt-6 text-xs text-zinc-500 text-center">
+        *Valores referenciales. Precios mensuales + IVA.
+      </p>
     </div>
   </div>
 </section>
