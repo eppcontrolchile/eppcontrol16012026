@@ -3,11 +3,11 @@
 
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-const supabase = createClient(
+const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
@@ -36,12 +36,6 @@ export default function LoginPage() {
       setError("Correo o contraseña incorrectos.");
       return;
     }
-
-    // 🔑 Forzar persistencia de sesión (cookies) para SSR
-    await supabase.auth.setSession({
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
-    });
 
     const sessionCheck = await supabase.auth.getSession();
     console.log("SESSION AFTER LOGIN:", sessionCheck.data.session);
