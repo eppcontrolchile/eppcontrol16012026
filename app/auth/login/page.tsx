@@ -27,6 +27,9 @@ export default function LoginPage() {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
+      options: {
+        shouldCreateUser: false,
+      },
     });
 
     console.log("SIGN IN ERROR:", error);
@@ -36,6 +39,12 @@ export default function LoginPage() {
       setError("Correo o contraseña incorrectos.");
       return;
     }
+
+    // 🔑 Forzar persistencia de sesión (cookies) para SSR
+    await supabase.auth.setSession({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    });
 
     const sessionCheck = await supabase.auth.getSession();
     console.log("SESSION AFTER LOGIN:", sessionCheck.data.session);
