@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// 🔹 Normalizar RUT chileno (XXXXXXXX-X)
-function validarYNormalizarRut(rut: string) {
+/* ============================
+   RUT: flexible, sin rechazar
+   ============================ */
+function normalizarRut(rut: string) {
   if (!rut) return null;
 
   const limpio = rut
@@ -19,7 +21,6 @@ function validarYNormalizarRut(rut: string) {
   return `${cuerpo}-${dv}`;
 }
 
-// 🔹 Date → YYYY-MM-DD (Postgres date)
 function toDateOnly(date: Date) {
   return date.toISOString().split("T")[0];
 }
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const rutNormalizado = validarYNormalizarRut(companyRut);
+    const rutNormalizado = normalizarRut(companyRut);
     if (!rutNormalizado) {
       return NextResponse.json(
         { error: "RUT de empresa inválido" },
@@ -64,9 +65,7 @@ export async function POST(req: Request) {
     }
 
     const planNormalizado =
-      plan === "advanced" ? "advanced" :
-      plan === "standard" ? "standard" :
-      null;
+      plan === "standard" || plan === "advanced" ? plan : null;
 
     if (!planNormalizado) {
       return NextResponse.json(
@@ -75,13 +74,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // 🔐 Cliente ADMIN (bypass RLS)
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 1️⃣ CREAR USUARIO AUTH (FORMA CORRECTA)
+    /* ============================
+       1️⃣ CREAR USUARIO AUTH (ADMIN)
+       ============================ */
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email,
@@ -91,19 +91,24 @@ export async function POST(req: Request) {
 
     if (authError || !authData.user) {
       return NextResponse.json(
-        { error: authError?.message || "Error creando usuario auth" },
+        { error: authError?.message || "Error creando usuario" },
         { status: 400 }
       );
     }
 
     const authUserId = authData.user.id;
 
-    // 2️⃣ Crear empresa
+    /* ============================
+       2️⃣ EMPRESA
+       ============================ */
     const limite =
-      companySize === "25" ? 25 :
-      companySize === "50" ? 50 :
-      companySize === "100" ? 100 :
-      9999;
+      companySize === "25"
+        ? 25
+        : companySize === "50"
+        ? 50
+        : companySize === "100"
+        ? 100
+        : 9999;
 
     const { data: empresa, error: empresaError } = await supabaseAdmin
       .from("empresas")
@@ -123,15 +128,16 @@ export async function POST(req: Request) {
       .single();
 
     if (empresaError || !empresa) {
-      console.error("❌ EMPRESA ERROR:", empresaError);
       return NextResponse.json(
         { error: "Error creando empresa" },
         { status: 400 }
       );
     }
 
-    // 3️⃣ Usuario interno
-    const { error: usuarioError } = await supabaseAdmin
+    /* ============================
+       3️⃣ USUARIO INTERNO
+       ============================ */
+    const { data: usuario, error: usuarioError } = await supabaseAdmin
       .from("usuarios")
       .insert({
         empresa_id: empresa.id,
@@ -139,16 +145,20 @@ export async function POST(req: Request) {
         email,
         auth_user_id: authUserId,
         activo: true,
-      });
+      })
+      .select()
+      .single();
 
-    if (usuarioError) {
+    if (usuarioError || !usuario) {
       return NextResponse.json(
         { error: "Error creando usuario interno" },
         { status: 400 }
       );
     }
 
-    // 4️⃣ Rol admin
+    /* ============================
+       4️⃣ ROL ADMIN
+       ============================ */
     const { data: rolAdmin } = await supabaseAdmin
       .from("roles")
       .select("id")
@@ -157,17 +167,16 @@ export async function POST(req: Request) {
 
     if (rolAdmin) {
       await supabaseAdmin.from("usuarios_roles").insert({
-        usuario_id: authUserId,
+        usuario_id: usuario.id,
         rol_id: rolAdmin.id,
       });
     }
 
     return NextResponse.json({ ok: true });
-
   } catch (err: any) {
-    console.error("❌ REGISTER ERROR:", err);
+    console.error("REGISTER ERROR:", err);
     return NextResponse.json(
-      { error: err.message || "Error inesperado" },
+      { error: "Error inesperado" },
       { status: 500 }
     );
   }
