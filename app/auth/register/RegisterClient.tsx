@@ -22,7 +22,7 @@ export default function RegisterClient() {
   const [form, setForm] = useState({
     companyName: "",
     companyRut: "",
-    industry: "",
+    companyLogoFile: null as File | null,
     companySize: "",
     firstName: "",
     lastName: "",
@@ -34,6 +34,19 @@ export default function RegisterClient() {
         ? planFromUrl
         : "",
   });
+
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!form.companyLogoFile) {
+      setLogoPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(form.companyLogoFile);
+    setLogoPreviewUrl(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [form.companyLogoFile]);
 
   useEffect(() => {
     if (planFromUrl === "standard" || planFromUrl === "advanced") {
@@ -141,18 +154,35 @@ export default function RegisterClient() {
                 className="input"
                 onChange={handleChange}
               />
-              <select
-                name="industry"
-                className="input"
-                onChange={handleChange}
-              >
-                <option value="">Rubro</option>
-                <option>Construcción</option>
-                <option>Industrial</option>
-                <option>Logística</option>
-                <option>Servicios</option>
-                <option>Otro</option>
-              </select>
+
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium mb-1">
+                  Logo de la empresa (opcional)
+                </label>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      companyLogoFile: e.target.files?.[0] || null,
+                    }))
+                  }
+                  className="input"
+                />
+                {logoPreviewUrl && (
+                  <div className="mt-3 flex items-center gap-3">
+                    <img
+                      src={logoPreviewUrl}
+                      alt="Preview logo empresa"
+                      className="h-16 w-16 rounded-md object-contain border"
+                    />
+                    <span className="text-sm text-gray-500">
+                      Vista previa
+                    </span>
+                  </div>
+                )}
+              </div>
 
               <select
                 name="companySize"
