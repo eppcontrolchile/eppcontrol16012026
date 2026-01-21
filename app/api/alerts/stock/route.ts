@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { getStock } from "@/app/utils/stock";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 let lastSentDate: string | null = null;
 
@@ -16,6 +15,14 @@ function calcularStockTotal(item: any) {
 
 export async function POST() {
   try {
+    const apiKey = process.env.RESEND_API_KEY;
+
+    if (!apiKey) {
+      console.warn("RESEND_API_KEY no definida, omitiendo envío de alertas");
+      return NextResponse.json({ ok: true, skipped: true, reason: "missing_api_key" });
+    }
+
+    const resend = new Resend(apiKey);
     const today = new Date().toISOString().slice(0, 10);
 
     if (lastSentDate === today) {
