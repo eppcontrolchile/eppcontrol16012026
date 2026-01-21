@@ -82,8 +82,7 @@ export default function PrimerosDatosPage() {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
-        alert("Sesión inválida. Inicia sesión nuevamente.");
-        router.push("/auth/login");
+        router.replace("/auth/login");
         return;
       }
 
@@ -167,7 +166,7 @@ export default function PrimerosDatosPage() {
         .eq("id", empresaId);
 
       alert("Primeros datos guardados correctamente");
-      router.push("/dashboard");
+      router.replace("/dashboard");
     } catch (err: any) {
       alert(err.message || "Error al guardar los datos");
     } finally {

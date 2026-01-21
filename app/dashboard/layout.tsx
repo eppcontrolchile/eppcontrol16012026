@@ -49,7 +49,7 @@ export default async function DashboardLayout({
   // 3️⃣ Empresa
   const { data: empresa, error: empresaError } = await supabase
     .from("empresas")
-    .select("nombre, rut, plan_tipo")
+    .select("nombre, rut, plan_tipo, logo_url")
     .eq("id", usuario.empresa_id)
     .single();
 
@@ -66,6 +66,7 @@ export default async function DashboardLayout({
       companyRut={empresa.rut}
       plan={empresa.plan_tipo}
       rol={usuario.rol}
+      companyLogoUrl={empresa.logo_url}
     >
       {children}
     </DashboardShell>

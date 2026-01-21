@@ -2,175 +2,15 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import jsPDF from "jspdf";
+import { generarPdfEntrega } from "@/app/utils/entrega-pdf";
 
-type Egreso = {
-  id: string;
-  fecha: string;
-  trabajador: {
-    nombre: string;
-    rut: string;
-    centro: string;
-  };
-  items: {
-    categoria: string;
-    epp: string;
-    tallaNumero: string;
-    cantidad: number;
-    costoTotal: number; // IVA incluido
-  }[];
-  costoTotalEgreso: number; // IVA incluido
-  firmaBase64: string;
-};
-
-function generarPDF(egreso: Egreso) {
-  const empresaNombre = localStorage.getItem("companyName");
-  const empresaRut = localStorage.getItem("companyRut");
-
-  if (!empresaNombre || !empresaRut) {
-    alert(
-      "Para generar el comprobante PDF debes completar el nombre y RUT de la empresa en Configuración Empresa."
-    );
-    return;
-  }
-
-  const empresaLogo = localStorage.getItem("companyLogo"); // base64 opcional
-  const doc = new jsPDF();
-
-  let y = 20;
-
-  // Encabezado empresa
-  if (empresaLogo) {
-    doc.addImage(empresaLogo, "PNG", 10, y, 30, 20);
-  }
-
-  doc.setFontSize(12);
-  doc.text(empresaNombre, 50, y + 8);
-  doc.setFontSize(10);
-  if (empresaRut) {
-    doc.text(`RUT: ${empresaRut}`, 50, y + 14);
-  }
-
-  y += 30;
-
-  doc.setFontSize(9);
-  doc.text(
-    `Comprobante N° ${egreso.id}`,
-    105,
-    y,
-    { align: "center" }
-  );
-  y += 6;
-
-  // Título centrado
-  doc.setFontSize(14);
-  doc.text(
-    "COMPROBANTE DE ENTREGA DE EPP",
-    105,
-    y,
-    { align: "center" }
-  );
-  y += 12;
-
-  // Texto legal introductorio
-  const fechaFormateada = egreso.fecha.split("T")[0].split("-").reverse().join("/");
-
-  doc.setFontSize(10);
-  doc.text(
-    `Conste por el presente documento que, con fecha ${fechaFormateada}, ` +
-      `la entidad empleadora ${empresaNombre}` +
-      (empresaRut ? `, RUT: ${empresaRut}, ` : ", ") +
-      `ha dado cumplimiento a la obligación de suministrar los Equipos de Protección Individual (EPI) necesarios, ` +
-      `conforme a lo dispuesto en la legislación nacional vigente, garantizando la idoneidad y el estado óptimo ` +
-      `de los elementos entregados a:`,
-    10,
-    y,
-    { maxWidth: 190 }
-  );
-  y += 18;
-
-  // Datos trabajador
-  doc.setFontSize(11);
-  doc.text("Trabajador", 10, y);
-  y += 6;
-
-  doc.setFontSize(10);
-  doc.text(`Nombre: ${egreso.trabajador.nombre}`, 10, y);
-  y += 5;
-  doc.text(`RUT: ${egreso.trabajador.rut}`, 10, y);
-  y += 5;
-  doc.text(`Centro: ${egreso.trabajador.centro}`, 10, y);
-  y += 8;
-
-  // Tabla simple de EPP
-  doc.setFontSize(11);
-  doc.text("EPP Entregados", 10, y);
-  y += 6;
-
-  doc.setFontSize(10);
-  egreso.items.forEach((item) => {
-    doc.text(
-      `• ${item.categoria} - ${item.epp} | ${item.tallaNumero} | Cant: ${item.cantidad}`,
-      12,
-      y
-    );
-    y += 5;
-  });
-
-  y += 10;
-
-  doc.setFontSize(10);
-  doc.text(
-    "Declaro haber recibido conforme los Equipos de Protección Individual (EPI) indicados, " +
-      "en buen estado y adecuados a mis funciones, comprometiéndome a utilizarlos correctamente " +
-      "y a mantenerlos en las condiciones exigidas por la normativa vigente.",
-    10,
-    y,
-    { maxWidth: 190 }
-  );
-  y += 14;
-
-  // Firma
-  doc.setFontSize(11);
-  doc.text("Firma del trabajador:", 10, y);
-  y += 4;
-
-  if (egreso.firmaBase64) {
-    doc.addImage(egreso.firmaBase64, "PNG", 10, y, 60, 25);
-    y += 30;
-  }
-
-  // Pie EPP Control centrado con logo
-  const pageWidth = doc.internal.pageSize.getWidth();
-
-  const footerY = 270;
-
-  doc.addImage("/logoepp.png", "PNG", pageWidth / 2 - 15, footerY, 30, 15);
-
-  doc.setFontSize(9);
-  doc.text(
-    "EPP Control — Gestión inteligente de EPP",
-    pageWidth / 2,
-    footerY + 20,
-    { align: "center" }
-  );
-  doc.text(
-    "www.eppcontrol.cl",
-    pageWidth / 2,
-    footerY + 25,
-    { align: "center" }
-  );
-
-  const fechaPDF = egreso.fecha
-    .split("T")[0]
-    .replace(/-/g, ".");
-
-  doc.save(
-    `${fechaPDF}_${egreso.trabajador.rut}_Entrega_EPP.pdf`
-  );
-}
 
 export default function EntregasPage() {
+  const empresa = {
+    nombre: localStorage.getItem("companyName") || "",
+    rut: localStorage.getItem("companyRut") || "",
+    logo_url: localStorage.getItem("companyLogoUrl"),
+  };
   const [nombre, setNombre] = useState("");
   const [rut, setRut] = useState("");
   const [centro, setCentro] = useState("");
@@ -518,7 +358,12 @@ export default function EntregasPage() {
                     </button>
                     <button
                       className="text-zinc-700 underline"
-                      onClick={() => generarPDF(row.egreso)}
+                      onClick={() =>
+                        generarPdfEntrega({
+                          empresa,
+                          egreso: row.egreso,
+                        })
+                      }
                     >
                       PDF
                     </button>

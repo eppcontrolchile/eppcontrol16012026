@@ -29,18 +29,17 @@ function toDateOnly(date: Date) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const formData = await req.formData();
 
-    const {
-      companyName,
-      companyRut,
-      companySize,
-      plan,
-      firstName,
-      lastName,
-      email,
-      password,
-    } = body;
+    const companyName = formData.get("companyName") as string;
+    const companyRut = formData.get("companyRut") as string;
+    const companySize = formData.get("companySize") as string;
+    const plan = formData.get("plan") as string;
+    const firstName = formData.get("firstName") as string;
+    const lastName = formData.get("lastName") as string;
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+    const logoFile = formData.get("companyLogo") as File | null;
 
     if (
       !companyName ||
@@ -134,6 +133,36 @@ export async function POST(req: Request) {
         { error: "Error creando empresa" },
         { status: 400 }
       );
+    }
+
+    /* ============================
+       2️⃣🖼️ LOGO EMPRESA (OPCIONAL)
+       ============================ */
+    if (logoFile && logoFile.size > 0) {
+      const arrayBuffer = await logoFile.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      const filePath = `${empresa.id}/logo.png`;
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from("company-logos")
+        .upload(filePath, buffer, {
+          contentType: logoFile.type,
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        const { data: publicUrlData } = supabaseAdmin.storage
+          .from("company-logos")
+          .getPublicUrl(filePath);
+
+        if (publicUrlData?.publicUrl) {
+          await supabaseAdmin
+            .from("empresas")
+            .update({ logo_url: publicUrlData.publicUrl })
+            .eq("id", empresa.id);
+        }
+      }
     }
 
     /* ============================

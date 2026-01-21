@@ -83,10 +83,24 @@ export default function RegisterClient() {
     setLoading(true);
 
     try {
+      const formData = new FormData();
+
+      formData.append("companyName", form.companyName);
+      formData.append("companyRut", form.companyRut);
+      formData.append("companySize", form.companySize);
+      formData.append("plan", form.plan);
+      formData.append("firstName", form.firstName);
+      formData.append("lastName", form.lastName);
+      formData.append("email", form.email);
+      formData.append("password", form.password);
+
+      if (form.companyLogoFile) {
+        formData.append("companyLogo", form.companyLogoFile);
+      }
+
       const res = await fetch("/api/register", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: formData,
       });
 
       const result = await res.json();
@@ -155,10 +169,27 @@ export default function RegisterClient() {
                 onChange={handleChange}
               />
 
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium mb-1">
-                  Logo de la empresa (opcional)
-                </label>
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium mb-2">
+              Logo de la empresa (opcional)
+            </label>
+
+            <div className="flex items-center gap-4">
+              {/* Preview */}
+              <div className="h-16 w-16 flex items-center justify-center rounded-md border bg-white">
+                {logoPreviewUrl ? (
+                  <img
+                    src={logoPreviewUrl}
+                    alt="Preview logo empresa"
+                    className="h-14 w-14 object-contain"
+                  />
+                ) : (
+                  <span className="text-xs text-gray-400">Logo</span>
+                )}
+              </div>
+
+              {/* File input */}
+              <label className="flex-1">
                 <input
                   type="file"
                   accept="image/png,image/jpeg"
@@ -168,21 +199,14 @@ export default function RegisterClient() {
                       companyLogoFile: e.target.files?.[0] || null,
                     }))
                   }
-                  className="input"
+                  className="hidden"
                 />
-                {logoPreviewUrl && (
-                  <div className="mt-3 flex items-center gap-3">
-                    <img
-                      src={logoPreviewUrl}
-                      alt="Preview logo empresa"
-                      className="h-16 w-16 rounded-md object-contain border"
-                    />
-                    <span className="text-sm text-gray-500">
-                      Vista previa
-                    </span>
-                  </div>
-                )}
-              </div>
+                <div className="cursor-pointer rounded-md border px-4 py-2 text-sm text-gray-600 hover:border-sky-500 hover:text-sky-600 transition">
+                  {form.companyLogoFile ? "Cambiar logo" : "Seleccionar logo"}
+                </div>
+              </label>
+            </div>
+          </div>
 
               <select
                 name="companySize"

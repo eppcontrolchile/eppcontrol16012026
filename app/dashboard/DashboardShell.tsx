@@ -14,6 +14,7 @@ type Props = {
   companyRut: string;
   plan: "standard" | "advanced";
   rol: "admin" | "supervisor" | "bodega" | "solo_lectura";
+  companyLogoUrl?: string | null;
   children: React.ReactNode;
 };
 
@@ -22,6 +23,7 @@ export default function DashboardShell({
   companyRut,
   plan,
   rol,
+  companyLogoUrl,
   children,
 }: Props) {
   const router = useRouter();
@@ -36,14 +38,24 @@ export default function DashboardShell({
       {/* SIDEBAR */}
       <aside className="w-60 bg-white border-r px-4 py-6">
         <div className="flex items-center gap-3 mb-8">
-          <Image
-            src="/logoepp.png"
-            alt="EPP Control"
-            width={320}
-            height={200}
-            className="h-16 w-auto"
-            priority
-          />
+          <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden">
+            {companyLogoUrl ? (
+              <img
+                src={companyLogoUrl}
+                alt="Logo empresa"
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              <Image
+                src="/logoepp.png"
+                alt="EPP Control"
+                width={160}
+                height={100}
+                className="h-full w-full object-contain"
+                priority
+              />
+            )}
+          </div>
           <div className="leading-tight">
             <div className="font-semibold text-zinc-800 text-sm">
               {companyName}
