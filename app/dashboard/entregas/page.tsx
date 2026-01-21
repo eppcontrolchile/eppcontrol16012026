@@ -3,14 +3,14 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { generarPdfEntrega } from "@/app/utils/entrega-pdf";
+import { createBrowserClient } from "@supabase/ssr";
 
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function EntregasPage() {
-  const empresa = {
-    nombre: localStorage.getItem("companyName") || "",
-    rut: localStorage.getItem("companyRut") || "",
-    logo_url: localStorage.getItem("companyLogoUrl"),
-  };
   const [nombre, setNombre] = useState("");
   const [rut, setRut] = useState("");
   const [centro, setCentro] = useState("");
@@ -21,13 +21,94 @@ export default function EntregasPage() {
 
   const [egresos, setEgresos] = useState<Egreso[]>([]);
 
+  const [empresa, setEmpresa] = useState<{
+    nombre: string;
+    rut: string;
+    logo_url?: string | null;
+  } | null>(null);
+
   // Sorting state
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
-    const data = JSON.parse(localStorage.getItem("egresos") || "[]");
-    setEgresos(data);
+    const fetchEntregas = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const { data: usuario } = await supabase
+        .from("usuarios")
+        .select("empresa_id")
+        .eq("auth_user_id", user.id)
+        .single();
+
+      if (!usuario?.empresa_id) return;
+
+      const { data: empresaData } = await supabase
+        .from("empresas")
+        .select("nombre, rut, logo_url")
+        .eq("id", usuario.empresa_id)
+        .single();
+
+      if (empresaData) {
+        setEmpresa({
+          nombre: empresaData.nombre,
+          rut: empresaData.rut,
+          logo_url: empresaData.logo_url,
+        });
+      }
+
+      const { data, error } = await supabase
+        .from("entregas")
+        .select(`
+          id,
+          fecha_entrega,
+          firma_url,
+          trabajadores:trabajador_id (
+            nombre,
+            rut
+          ),
+          centros_trabajo:centro_id (
+            nombre
+          ),
+          entrega_items (
+            categoria,
+            nombre_epp,
+            talla,
+            cantidad,
+            costo_unitario_iva
+          )
+        `)
+        .eq("empresa_id", usuario.empresa_id)
+        .order("fecha_entrega", { ascending: false });
+
+      if (error || !data) return;
+
+      const formateados = data.map((e: any) => ({
+        id: e.id,
+        fecha: e.fecha_entrega,
+        firmaBase64: e.firma_url,
+        trabajador: {
+          nombre: e.trabajadores?.nombre || "",
+          rut: e.trabajadores?.rut || "",
+          centro: e.centros_trabajo?.nombre || "",
+        },
+        items: e.entrega_items.map((item: any) => ({
+          categoria: item.categoria,
+          epp: item.nombre_epp,
+          tallaNumero: item.talla,
+          cantidad: item.cantidad,
+          costoTotal: item.costo_unitario_iva,
+        })),
+      }));
+
+      setEgresos(formateados);
+    };
+
+    fetchEntregas();
   }, []);
 
   // Helper to handle sorting
@@ -358,12 +439,13 @@ export default function EntregasPage() {
                     </button>
                     <button
                       className="text-zinc-700 underline"
-                      onClick={() =>
+                      onClick={() => {
+                        if (!empresa) return;
                         generarPdfEntrega({
                           empresa,
                           egreso: row.egreso,
-                        })
-                      }
+                        });
+                      }}
                     >
                       PDF
                     </button>
