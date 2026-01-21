@@ -38,9 +38,11 @@ export type EgresoPDF = {
 export async function generarPdfEntrega({
   empresa,
   egreso,
+  returnBlob = false,
 }: {
   empresa: EmpresaPDF;
   egreso: EgresoPDF;
+  returnBlob?: boolean;
 }) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -196,6 +198,10 @@ export async function generarPdfEntrega({
   // ─────────────────────────────────────────────
   // Guardar archivo
   // ─────────────────────────────────────────────
+  if (returnBlob) {
+    return doc.output("blob");
+  }
+
   const fechaPDF = fechaFormateada.replace(/\//g, ".");
   doc.save(
     `${fechaPDF}_${egreso.trabajador.rut}_Entrega_EPP.pdf`
