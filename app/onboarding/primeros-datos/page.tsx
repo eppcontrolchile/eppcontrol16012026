@@ -63,7 +63,7 @@ export default function PrimerosDatosPage() {
   // Obtener empresa_id desde Supabase
   // ─────────────────────────────────────────────
   useEffect(() => {
-    const supabase = supabaseBrowser;
+    const supabase = supabaseBrowser();
 
     const fetchEmpresaId = async () => {
       const {
@@ -101,8 +101,7 @@ export default function PrimerosDatosPage() {
   // ─────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = supabaseBrowser;
-    if (!supabase) return;
+    const supabase = supabaseBrowser();
 
     if (!empresaId || isSubmitting) return;
 

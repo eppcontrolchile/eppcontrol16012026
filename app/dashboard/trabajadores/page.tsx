@@ -74,7 +74,7 @@ export default function TrabajadoresPage() {
   useEffect(() => {
     // Get current user and empresa_id
     async function fetchUserData() {
-      const { data: { user } } = await supabaseBrowser.auth.getUser();
+      const { data: { user } } = await supabaseBrowser().auth.getUser();
       if (!user) {
         // Not authenticated
         setTrabajadores([]);
@@ -83,7 +83,7 @@ export default function TrabajadoresPage() {
         return;
       }
       // Fetch empresa_id from usuarios table, not user_metadata
-      const { data: usuarioRow, error: usuarioError } = await supabaseBrowser
+      const { data: usuarioRow, error: usuarioError } = await supabaseBrowser()
         .from("usuarios")
         .select("empresa_id")
         .eq("auth_user_id", user.id)
@@ -100,7 +100,7 @@ export default function TrabajadoresPage() {
       setEmpresaId(empresa_id);
 
       // Fetch trabajadores
-      const { data: trabajadoresData, error: trabajadoresError } = await supabaseBrowser
+      const { data: trabajadoresData, error: trabajadoresError } = await supabaseBrowser()
         .from("trabajadores")
         .select("*")
         .eq("empresa_id", empresa_id)
@@ -109,7 +109,7 @@ export default function TrabajadoresPage() {
         setTrabajadores(trabajadoresData as Trabajador[]);
       }
       // Fetch centros de trabajo
-      const { data: centrosData, error: centrosError } = await supabaseBrowser
+      const { data: centrosData, error: centrosError } = await supabaseBrowser()
         .from("centros_trabajo")
         .select("*")
         .eq("empresa_id", empresa_id)
@@ -118,7 +118,7 @@ export default function TrabajadoresPage() {
         setCentros(centrosData as CentroTrabajo[]);
       }
       // Fetch entregas (para métricas de gasto)
-      const { data: entregasData, error: entregasError } = await supabaseBrowser
+      const { data: entregasData, error: entregasError } = await supabaseBrowser()
         .from("entregas")
         .select("fecha_entrega, trabajador_id, costo_total_iva")
         .eq("empresa_id", empresa_id);
@@ -150,7 +150,7 @@ export default function TrabajadoresPage() {
     }
     if (!empresaId) return;
     // Insert trabajador in Supabase
-    const { data, error } = await supabaseBrowser
+    const { data, error } = await supabaseBrowser()
       .from("trabajadores")
       .insert([
         {
@@ -180,7 +180,7 @@ export default function TrabajadoresPage() {
     valor: string
   ) {
     // Update in Supabase
-    const { error } = await supabaseBrowser
+    const { error } = await supabaseBrowser()
       .from("trabajadores")
       .update({ [campo]: valor })
       .eq("id", id);
@@ -200,7 +200,7 @@ export default function TrabajadoresPage() {
       return;
     }
     // Update in Supabase
-    const { error } = await supabaseBrowser
+    const { error } = await supabaseBrowser()
       .from("trabajadores")
       .update({ activo: false })
       .eq("id", id);
@@ -315,7 +315,7 @@ export default function TrabajadoresPage() {
         return;
       }
 
-      const { data, error } = await supabaseBrowser
+      const { data, error } = await supabaseBrowser()
         .from("trabajadores")
         .insert(nuevos)
         .select();

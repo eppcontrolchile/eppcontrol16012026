@@ -35,14 +35,14 @@ export default function CentrosPage() {
       const {
         data: { user },
         error: userError,
-      } = await supabaseBrowser.auth.getUser();
+      } = await supabaseBrowser().auth.getUser();
 
       if (userError || !user) {
         setLoading(false);
         return;
       }
 
-      const { data: usuario } = await supabaseBrowser
+      const { data: usuario } = await supabaseBrowser()
         .from("usuarios")
         .select("empresa_id")
         .eq("auth_user_id", user.id)
@@ -55,7 +55,7 @@ export default function CentrosPage() {
 
       setEmpresaId(usuario.empresa_id);
 
-      const { data: centrosDB, error: fetchError } = await supabaseBrowser
+      const { data: centrosDB, error: fetchError } = await supabaseBrowser()
         .from("centros_trabajo")
         .select("id, nombre, activo")
         .eq("empresa_id", usuario.empresa_id)
@@ -70,7 +70,7 @@ export default function CentrosPage() {
       setCentros(centrosDB || []);
       setLoading(false);
 
-      channel = supabaseBrowser
+      channel = supabaseBrowser()
         .channel("centros_trabajo_changes")
         .on(
           "postgres_changes",
@@ -101,7 +101,7 @@ export default function CentrosPage() {
 
     return () => {
       if (channel) {
-        supabaseBrowser.removeChannel(channel);
+        supabaseBrowser().removeChannel(channel);
       }
     };
   }, []);
@@ -126,7 +126,7 @@ export default function CentrosPage() {
 
     if (!empresaId) return;
 
-    const { data, error } = await supabaseBrowser
+    const { data, error } = await supabaseBrowser()
       .from("centros_trabajo")
       .insert({
         empresa_id: empresaId,
@@ -155,7 +155,7 @@ export default function CentrosPage() {
 
     if (!confirmar) return;
 
-    await supabaseBrowser
+    await supabaseBrowser()
       .from("centros_trabajo")
       .update({ activo: false })
       .eq("id", id);

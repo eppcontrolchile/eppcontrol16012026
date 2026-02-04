@@ -26,10 +26,10 @@ export default function EntregasPage() {
     const fetchEntregas = async () => {
       setLoading(true);
 
-      const { data: auth } = await supabaseBrowser.auth.getUser();
+      const { data: auth } = await supabaseBrowser().auth.getUser();
       if (!auth?.user) return;
 
-      const { data: usuario } = await supabaseBrowser
+      const { data: usuario } = await supabaseBrowser()
         .from("usuarios")
         .select("empresa_id")
         .eq("auth_user_id", auth.user.id)
@@ -37,7 +37,7 @@ export default function EntregasPage() {
 
       if (!usuario?.empresa_id) return;
 
-      const { data, error } = await supabaseBrowser
+      const { data, error } = await supabaseBrowser()
         .from("entregas")
         .select(`
           id,
@@ -84,10 +84,10 @@ export default function EntregasPage() {
       <div className="flex justify-end">
         <button
           onClick={async () => {
-            const { data: auth } = await supabaseBrowser.auth.getUser();
+            const { data: auth } = await supabaseBrowser().auth.getUser();
             if (!auth?.user) return;
 
-            const { data: usuario } = await supabaseBrowser
+            const { data: usuario } = await supabaseBrowser()
               .from("usuarios")
               .select("empresa_id")
               .eq("auth_user_id", auth.user.id)

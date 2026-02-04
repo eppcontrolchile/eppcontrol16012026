@@ -51,7 +51,7 @@ export default function ConfiguracionPage() {
       const {
         data: { user },
         error: userError,
-      } = await supabaseBrowser.auth.getUser();
+      } = await supabaseBrowser().auth.getUser();
 
       if (userError || !user) {
         alert("Sesión inválida. Inicia sesión nuevamente.");
@@ -59,7 +59,7 @@ export default function ConfiguracionPage() {
         return;
       }
 
-      const { data, error } = await supabaseBrowser
+      const { data, error } = await supabaseBrowser()
         .from("usuarios")
         .select("empresa_id, email")
         .eq("auth_user_id", user.id)
@@ -117,7 +117,7 @@ export default function ConfiguracionPage() {
       : null;
       
 
-    const { error } = await (supabaseBrowser.from("empresas") as any)
+    const { error } = await (supabaseBrowser().from("empresas") as any)
       .update({
         email_gerencia: config.correoGerencia,
         email_alertas: correoAlertasFinal,
@@ -148,7 +148,7 @@ export default function ConfiguracionPage() {
       return;
     }
 
-    const { error } = await (supabaseBrowser.from("empresas") as any)
+    const { error } = await (supabaseBrowser().from("empresas") as any)
       .update({
         email_gerencia: config.correoGerencia,
         alertas_activas: false,

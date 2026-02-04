@@ -45,7 +45,7 @@ export default function DashboardShell({
   }, [initialLogoSrc]);
 
   const handleLogout = async () => {
-    await supabaseBrowser.auth.signOut();
+    await supabaseBrowser().auth.signOut();
     router.push("/auth/login");
   };
 

@@ -47,7 +47,7 @@ export default function EgresoPage() {
     try {
       // 2️⃣ Usuario autenticado
       const { data: authData, error: authError } =
-        await supabaseBrowser.auth.getUser();
+        await supabaseBrowser().auth.getUser();
 
       if (authError || !authData?.user) {
         setError("No autenticado. Inicia sesión nuevamente.");
@@ -55,7 +55,7 @@ export default function EgresoPage() {
       }
 
       // 3️⃣ Obtener usuario + empresa
-      const { data: usuario, error: usuarioError } = await supabaseBrowser
+      const { data: usuario, error: usuarioError } = await supabaseBrowser()
         .from("usuarios")
         .select("id, empresa_id, centro_id")
         .eq("auth_user_id", authData.user.id)

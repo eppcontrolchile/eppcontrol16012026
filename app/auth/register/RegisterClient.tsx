@@ -111,7 +111,7 @@ export default function RegisterClient() {
       }
 
       // Autologin (single shared client). Avoid creating multiple GoTrueClient instances.
-      const { data, error } = await supabaseBrowser.auth.signInWithPassword({
+      const { data, error } = await supabaseBrowser().auth.signInWithPassword({
         email: normalizedEmail,
         password: form.password,
       });
