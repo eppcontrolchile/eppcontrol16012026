@@ -19,6 +19,15 @@ export default async function DashboardLayout({
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // no-op
+          }
+        },
       },
     }
   );
@@ -42,19 +51,23 @@ export default async function DashboardLayout({
 
 
   if (usuarioError || !usuario) {
-    redirect("/auth/login");
+    // Usuario autenticado pero sin fila interna: deriva a onboarding/registro
+    redirect("/auth/register");
   }
 
   // 3️⃣ Empresa
   const { data: empresa, error: empresaError } = await supabase
     .from("empresas")
-    .select("nombre, rut, plan_tipo, logo_url")
+    .select(
+      "nombre, rut, plan_tipo, logo_url, onboarding_completado, onboarding_configuracion_completa"
+    )
     .eq("id", usuario.empresa_id)
     .single();
 
 
   if (empresaError || !empresa) {
-    redirect("/auth/login");
+    // Usuario autenticado pero empresa no accesible/no existe: envía a onboarding
+    redirect("/onboarding/configuracion");
   }
 
   // Normalizar valores a los unions esperados por DashboardShell
@@ -66,6 +79,15 @@ export default async function DashboardLayout({
     usuario.rol === "solo_lectura"
       ? usuario.rol
       : "solo_lectura";
+
+  // 3️⃣.1 Onboarding gate: si no está completado, deriva al paso correcto
+  if (!empresa.onboarding_configuracion_completa) {
+    redirect("/onboarding/configuracion");
+  }
+
+  if (!empresa.onboarding_completado) {
+    redirect("/onboarding/primeros-datos");
+  }
 
   // 4️⃣ Render con contexto completo
   return (

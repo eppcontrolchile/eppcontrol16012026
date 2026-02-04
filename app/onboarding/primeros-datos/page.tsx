@@ -48,8 +48,8 @@ export default function PrimerosDatosPage() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [centros, setCentros] = useState<{ id: string; nombre: string }[]>([]);
-  const [centroId, setCentroId] = useState<string>("");
+  const [centroNombre, setCentroNombre] = useState<string>("");
+  const [centroCodigo, setCentroCodigo] = useState<string>("");
 
   const [trabajador, setTrabajador] = useState({
     nombre: "",
@@ -83,20 +83,12 @@ export default function PrimerosDatosPage() {
         .maybeSingle();
 
       if (error || !data?.empresa_id) {
-        alert("No se pudo identificar la empresa.");
+        alert("No se pudo identificar la empresa. Completa el registro.");
+        router.replace("/auth/register");
         return;
       }
 
       setEmpresaId(data.empresa_id);
-
-      const { data: centrosDB } = await supabase
-        .from("centros_trabajo")
-        .select("id, nombre")
-        .eq("empresa_id", data.empresa_id)
-        .eq("activo", true)
-        .order("nombre");
-
-      setCentros(centrosDB || []);
 
       setLoading(false);
     };
@@ -114,8 +106,8 @@ export default function PrimerosDatosPage() {
 
     if (!empresaId || isSubmitting) return;
 
-    if (!centroId) {
-      alert("Debes seleccionar un centro de trabajo.");
+    if (!centroNombre.trim()) {
+      alert("Debes ingresar el nombre del centro de trabajo.");
       return;
     }
 
@@ -127,6 +119,24 @@ export default function PrimerosDatosPage() {
     setIsSubmitting(true);
 
     try {
+      // 1️⃣ Crear centro de trabajo (obligatorio)
+      const { data: centroCreado, error: centroError } = await supabase
+        .from("centros_trabajo")
+        .insert({
+          empresa_id: empresaId,
+          nombre: centroNombre.trim(),
+          codigo: centroCodigo.trim() ? centroCodigo.trim() : null,
+          activo: true,
+        })
+        .select("id")
+        .single();
+
+      if (centroError || !centroCreado?.id) {
+        throw centroError || new Error("Error creando centro de trabajo");
+      }
+
+      const centroId = centroCreado.id;
+
       // 2️⃣ Crear trabajador manual (opcional)
       if (trabajador.nombre && trabajador.rut) {
         const rutNormalizado = normalizarRut(trabajador.rut);
@@ -198,27 +208,25 @@ export default function PrimerosDatosPage() {
           {/* CENTRO DE TRABAJO */}
           <section>
             <h2 className="font-semibold text-lg mb-2">Centro de trabajo</h2>
-            <select
-              className="input"
-              value={centroId}
-              onChange={(e) => setCentroId(e.target.value)}
-            >
-              <option value="">Selecciona un centro de trabajo</option>
-              {centros.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nombre}
-                </option>
-              ))}
-            </select>
-            {centros.length === 0 && (
-              <p className="mt-2 text-sm text-red-600">
-                Aún no tienes centros de trabajo creados. Debes crearlos primero en la sección
-                <strong> Centros de trabajo</strong> del panel antes de continuar.
-              </p>
-            )}
-            <p className="text-xs text-zinc-500 mt-1">
-              Los centros de trabajo se crean y gestionan únicamente desde el panel.
-              Esto evita errores de escritura y duplicados en cargas posteriores.
+
+            <div className="space-y-3">
+              <input
+                placeholder="Nombre del centro de trabajo"
+                className="input"
+                value={centroNombre}
+                onChange={(e) => setCentroNombre(e.target.value)}
+              />
+
+              <input
+                placeholder="Código (opcional)"
+                className="input"
+                value={centroCodigo}
+                onChange={(e) => setCentroCodigo(e.target.value)}
+              />
+            </div>
+
+            <p className="text-xs text-zinc-500 mt-2">
+              Este centro se usará como base para tus trabajadores y entregas. Podrás crear más centros luego desde el dashboard.
             </p>
           </section>
 
@@ -284,8 +292,8 @@ export default function PrimerosDatosPage() {
 
           <button
             type="submit"
-            disabled={isSubmitting || centros.length === 0}
-            className="w-full bg-sky-600 text-white rounded-xl py-3 hover:bg-sky-700"
+            disabled={isSubmitting}
+            className="w-full bg-sky-600 text-white rounded-xl py-3 hover:bg-sky-700 disabled:opacity-60"
           >
             Finalizar configuración
           </button>
