@@ -2,13 +2,12 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function RegisterClient() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const planFromUrl = searchParams.get("plan"); // standard | advanced | null
 
@@ -50,14 +49,13 @@ export default function RegisterClient() {
     }
   }, [planFromUrl]);
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
 
     if (form.password !== form.confirmPassword) {
       alert("Las contraseñas no coinciden");
@@ -78,6 +76,8 @@ export default function RegisterClient() {
       return;
     }
 
+    const normalizedEmail = form.email.trim().toLowerCase();
+
     setLoading(true);
 
     try {
@@ -90,7 +90,7 @@ export default function RegisterClient() {
       formData.append("plan_source", "register");
       formData.append("firstName", form.firstName);
       formData.append("lastName", form.lastName);
-      formData.append("email", form.email);
+      formData.append("email", normalizedEmail);
       formData.append("password", form.password);
 
       if (form.companyLogoFile) {
@@ -106,25 +106,29 @@ export default function RegisterClient() {
 
       if (!res.ok) {
         alert(result.error || "Error al crear cuenta");
+        setLoading(false);
         return;
       }
 
       // Autologin (single shared client). Avoid creating multiple GoTrueClient instances.
       const { data, error } = await supabaseBrowser.auth.signInWithPassword({
-        email: form.email,
+        email: normalizedEmail,
         password: form.password,
       });
 
       if (error || !data.session) {
         console.warn("AUTOLOGIN FAILED:", error);
         // Mostrar feedback útil para debug sin exponer detalles sensibles
-        alert("Cuenta creada, pero no se pudo iniciar sesión automáticamente. Inicia sesión manualmente.");
-        router.replace("/auth/login");
+        alert(
+          "Cuenta creada, pero no se pudo iniciar sesión automáticamente. Inicia sesión manualmente."
+        );
+        // Navegación completa para evitar estados inconsistentes
+        window.location.href = "/auth/login";
         return;
       }
 
-      // Sesión válida → continuar onboarding
-      router.replace("/onboarding/configuracion");
+      // Sesión válida → continuar onboarding (navegación completa para que middleware vea cookies)
+      window.location.href = "/onboarding/configuracion";
     } catch {
       alert("Error inesperado");
     } finally {
@@ -162,12 +166,14 @@ export default function RegisterClient() {
                 placeholder="Nombre empresa"
                 className="input"
                 onChange={handleChange}
+                required
               />
               <input
                 name="companyRut"
                 placeholder="RUT empresa"
                 className="input"
                 onChange={handleChange}
+                required
               />
 
           <div className="sm:col-span-2">
@@ -226,6 +232,7 @@ export default function RegisterClient() {
                 className="input"
                 onChange={handleChange}
                 value={form.plan}
+                required
               >
                 <option value="">Selecciona un plan</option>
                 <option value="standard">Plan Estándar</option>
@@ -246,12 +253,14 @@ export default function RegisterClient() {
                 placeholder="Nombre"
                 className="input"
                 onChange={handleChange}
+                required
               />
               <input
                 name="lastName"
                 placeholder="Apellido"
                 className="input"
                 onChange={handleChange}
+                required
               />
               <input
                 type="email"
@@ -259,6 +268,7 @@ export default function RegisterClient() {
                 placeholder="Correo"
                 className="input"
                 onChange={handleChange}
+                required
               />
               <input
                 type="password"
@@ -266,6 +276,7 @@ export default function RegisterClient() {
                 placeholder="Contraseña"
                 className="input"
                 onChange={handleChange}
+                required
               />
               <input
                 type="password"
@@ -273,6 +284,7 @@ export default function RegisterClient() {
                 placeholder="Confirmar contraseña"
                 className="input"
                 onChange={handleChange}
+                required
               />
             </div>
           </section>
