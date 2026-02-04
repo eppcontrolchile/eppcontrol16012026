@@ -1,126 +1,27 @@
 // app/dashboard/egreso/page.tsx
 "use client";
 
+import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getStockDesdeFIFO, consumirFIFO } from "@/app/utils/fifo";
-
-type Trabajador = {
-  id: string;
-  nombre: string;
-  rut: string;
-  centro: string;
-  activo: boolean;
-};
-
-type EgresoItem = {
-  categoria: string;
-  epp: string;
-  tallaNumero: string;
-  cantidad: number;
-  costoTotal: number; // IVA incluido (FIFO)
-};
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function EgresoPage() {
   const router = useRouter();
 
-  const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
-  const [stock, setStock] = useState<any[]>([]);
-  const [items, setItems] = useState<EgresoItem[]>([
-    { categoria: "", epp: "", tallaNumero: "", cantidad: 1, costoTotal: 0 },
-  ]);
+  const [error, setError] = useState<string>("");
 
-  const [trabajadorId, setTrabajadorId] = useState("");
-  const [error, setError] = useState("");
+  const [trabajadorId, setTrabajadorId] = useState<string>("");
+  const [items, setItems] = useState<any[]>([]);
+  const [firmado, setFirmado] = useState<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [firmado, setFirmado] = useState(false);
 
-  /* MOCK DATA */
-  useEffect(() => {
-    setTrabajadores([
-      { id: "1", nombre: "Juan Pérez", rut: "12.345.678-9", centro: "Planta Norte", activo: true },
-      { id: "2", nombre: "Ana Soto", rut: "9.876.543-2", centro: "Sucursal Sur", activo: false },
-    ]);
-  }, []);
-
-  useEffect(() => {
-    setStock(getStockDesdeFIFO());
-  }, []);
-
-  /* FIRMA */
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    let drawing = false;
-
-    const start = (e: MouseEvent) => {
-      drawing = true;
-      ctx.beginPath();
-      ctx.moveTo(e.offsetX, e.offsetY);
-    };
-
-    const draw = (e: MouseEvent) => {
-      if (!drawing) return;
-      ctx.lineTo(e.offsetX, e.offsetY);
-      ctx.stroke();
-      setFirmado(true);
-    };
-
-    const end = () => (drawing = false);
-
-    canvas.addEventListener("mousedown", start);
-    canvas.addEventListener("mousemove", draw);
-    canvas.addEventListener("mouseup", end);
-
-    return () => {
-      canvas.removeEventListener("mousedown", start);
-      canvas.removeEventListener("mousemove", draw);
-      canvas.removeEventListener("mouseup", end);
-    };
-  }, []);
-
-  const limpiarFirma = () => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (ctx && canvas) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      setFirmado(false);
-    }
-  };
-
-  const updateItem = (index: number, field: keyof EgresoItem, value: any) => {
-    const updated = [...items];
-    updated[index] = { ...updated[index], [field]: value };
-    setItems(updated);
-  };
-
-  const addItem = () => {
-    setItems([...items, { categoria: "", epp: "", tallaNumero: "", cantidad: 1, costoTotal: 0 }]);
-  };
-
-  const removeItem = (index: number) => {
-    setItems(items.filter((_, i) => i !== index));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    const companyRut = localStorage.getItem("companyRut");
-
-    if (!companyRut) {
-      setError(
-        "Debes completar el RUT de la empresa en Configuración antes de registrar un egreso"
-      );
-      return;
-    }
-
+    // 1️⃣ Validaciones UX mínimas
     if (!trabajadorId) {
       setError("Selecciona un trabajador");
       return;
@@ -131,260 +32,90 @@ export default function EgresoPage() {
       return;
     }
 
-    const itemResultados: EgresoItem[] = [];
-
     for (const item of items) {
-      if (!item.categoria || !item.epp || !item.tallaNumero || item.cantidad <= 0) {
+      if (
+        !item.categoria ||
+        !item.epp ||
+        item.cantidad <= 0 ||
+        !item.tallaNumero
+      ) {
         setError("Completa correctamente todos los EPP");
-        return;
-      }
-
-      try {
-        const resultado = consumirFIFO({
-          categoria: item.categoria,
-          nombreEpp: item.epp,
-          talla:
-            item.tallaNumero === "No aplica"
-              ? null
-              : item.tallaNumero,
-          cantidad: item.cantidad,
-        });
-
-        itemResultados.push({
-          ...item,
-          costoTotal: resultado.costoTotal,
-        });
-      } catch (err: any) {
-        setError(err.message);
         return;
       }
     }
 
-    const costoTotalEgreso = itemResultados.reduce(
-      (sum, i) => sum + i.costoTotal,
-      0
-    );
+    try {
+      // 2️⃣ Usuario autenticado
+      const { data: authData, error: authError } =
+        await supabaseBrowser.auth.getUser();
 
-    const firmaBase64 = canvasRef.current?.toDataURL();
+      if (authError || !authData?.user) {
+        setError("No autenticado. Inicia sesión nuevamente.");
+        return;
+      }
 
-    const trabajador = trabajadores.find(t => t.id === trabajadorId);
+      // 3️⃣ Obtener usuario + empresa
+      const { data: usuario, error: usuarioError } = await supabaseBrowser
+        .from("usuarios")
+        .select("id, empresa_id, centro_id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
 
-    const nuevoEgreso = {
-      id: crypto.randomUUID(),
-      fecha: new Date().toISOString(),
-      trabajador,
-      items: itemResultados,
-      costoTotalEgreso,
-      firmaBase64,
-    };
+      if (usuarioError || !usuario) {
+        setError("No se pudo identificar el usuario.");
+        return;
+      }
 
-    const egresosPrevios = JSON.parse(
-      localStorage.getItem("egresos") || "[]"
-    );
+      // 4️⃣ Construir payload limpio (sin lógica FIFO)
+      const payload = {
+        empresa_id: usuario.empresa_id,
+        usuario_id: usuario.id,
+        trabajador_id: trabajadorId,
+        centro_id: usuario.centro_id,
+        firma_url: canvasRef.current?.toDataURL() || null,
+        items: items.map((i) => ({
+          categoria: i.categoria,
+          nombre_epp: i.epp,
+          talla:
+            i.tallaNumero === "No aplica" || i.tallaNumero === ""
+              ? null
+              : i.tallaNumero,
+          cantidad: Number(i.cantidad),
+        })),
+      };
 
-    localStorage.setItem(
-      "egresos",
-      JSON.stringify([...egresosPrevios, nuevoEgreso])
-    );
+      // 5️⃣ Enviar a API de egresos (FIFO backend)
+      const resp = await fetch("/api/egresos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    setStock(getStockDesdeFIFO());
+      const result = await resp.json();
 
-    alert("Egreso registrado correctamente");
+      if (!resp.ok) {
+        setError(result.error || "Error al registrar el egreso");
+        return;
+      }
 
-    router.push("/dashboard/entregas");
+      // 6️⃣ Éxito FIFO confirmado
+      alert(
+        `Egreso registrado correctamente\n\n` +
+          `Unidades entregadas: ${result.total_unidades}\n` +
+          `Costo total: $${Number(result.costo_total_iva).toLocaleString("es-CL")}`
+      );
+
+      router.push("/dashboard/entregas");
+    } catch (err: any) {
+      setError(err?.message || "Error inesperado");
+    }
   };
 
-  const categoriasDisponibles = Array.from(
-    new Set(
-      stock
-        .filter((s) => s.cantidad > 0)
-        .map((s) => s.categoria)
-    )
-  );
-
   return (
-    <div className="max-w-2xl space-y-6">
-      <h1 className="text-2xl font-semibold">Egreso de EPP</h1>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <select
-          value={trabajadorId}
-          onChange={(e) => setTrabajadorId(e.target.value)}
-          className="input"
-        >
-          <option value="">Trabajador</option>
-          {trabajadores.filter(t => t.activo !== false).map(t => (
-            <option key={t.id} value={t.id}>
-              {t.nombre} · {t.rut}
-            </option>
-          ))}
-        </select>
-
-        {items.map((item, index) => {
-          const eppsDisponibles = stock
-            .filter(
-              (s) =>
-                s.categoria === item.categoria &&
-                s.cantidad > 0
-            )
-            .map((s) => s.nombreEpp)
-            .filter((v, i, a) => a.indexOf(v) === i);
-
-          const tallasDisponibles = stock.filter(
-            (s) =>
-              s.categoria === item.categoria &&
-              s.nombreEpp === item.epp &&
-              s.cantidad > 0
-          );
-
-          const stockVariante =
-            stock.find(
-              (s) =>
-                s.categoria === item.categoria &&
-                s.nombreEpp === item.epp &&
-                s.talla === (item.tallaNumero === "No aplica" ? null : item.tallaNumero)
-            )?.cantidad ?? 0;
-
-          return (
-            <div key={index} className="rounded border p-3 space-y-2">
-              <select
-                value={item.categoria || ""}
-                onChange={(e) => {
-                  const nuevaCategoria = e.target.value;
-
-                  setItems((prev) =>
-                    prev.map((it, i) =>
-                      i === index
-                        ? {
-                            ...it,
-                            categoria: nuevaCategoria,
-                            epp: "",
-                            tallaNumero: "",
-                          }
-                        : it
-                    )
-                  );
-                }}
-                className="input"
-              >
-                <option value="">Categoría de protección</option>
-                {categoriasDisponibles.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={item.epp || ""}
-                onChange={(e) => {
-                  const nuevoEpp = e.target.value;
-
-                  setItems((prev) =>
-                    prev.map((it, i) =>
-                      i === index
-                        ? {
-                            ...it,
-                            epp: nuevoEpp,
-                            tallaNumero: "",
-                          }
-                        : it
-                    )
-                  );
-                }}
-                className="input"
-                disabled={!item.categoria}
-              >
-                <option value="">EPP</option>
-                {eppsDisponibles.map((epp) => (
-                  <option key={epp} value={epp}>
-                    {epp}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={item.tallaNumero}
-                onChange={(e) => updateItem(index, "tallaNumero", e.target.value)}
-                className="input"
-                disabled={!item.epp}
-              >
-                <option value="">Talla / Número</option>
-                {tallasDisponibles.map((t) => (
-                  <option
-                    key={t.id}
-                    value={t.talla ?? "No aplica"}
-                  >
-                    {t.talla ?? "No aplica"} (stock {t.cantidad})
-                  </option>
-                ))}
-              </select>
-
-              {item.epp && tallasDisponibles.length === 0 && (
-                <p className="text-xs text-red-600">
-                  No hay stock disponible para este EPP
-                </p>
-              )}
-
-              <input
-                type="number"
-                min={1}
-                max={stockVariante}
-                value={item.cantidad}
-                onChange={(e) =>
-                  updateItem(index, "cantidad", Number(e.target.value))
-                }
-                className="input"
-                placeholder="Cantidad"
-                disabled={!item.tallaNumero}
-              />
-
-              {items.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeItem(index)}
-                  className="text-sm text-red-600 underline"
-                >
-                  Quitar EPP
-                </button>
-              )}
-            </div>
-          );
-        })}
-
-        <button
-          type="button"
-          onClick={addItem}
-          className="text-sm underline"
-        >
-          ➕ Agregar otro EPP
-        </button>
-
-        <div>
-          <p className="text-sm font-medium mb-1">Firma del trabajador</p>
-          <canvas
-            ref={canvasRef}
-            width={450}
-            height={160}
-            className="border rounded bg-white"
-          />
-          <button
-            type="button"
-            onClick={limpiarFirma}
-            className="mt-2 text-sm underline"
-          >
-            Limpiar firma
-          </button>
-        </div>
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <button
-          type="submit"
-          className="w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-700"
-        >
-          Registrar egreso
-        </button>
+    <div>
+      <form onSubmit={handleSubmit}>
+        {error && <p className="text-red-600">{error}</p>}
+        <button type="submit">Registrar egreso</button>
       </form>
     </div>
   );

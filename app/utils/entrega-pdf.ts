@@ -2,6 +2,15 @@
 
 import jsPDF from "jspdf";
 
+/**
+ * Ensures a base64 string has a proper data URL prefix.
+ */
+function normalizeBase64Image(base64: string): string {
+  if (!base64) return "";
+  if (base64.startsWith("data:image/")) return base64;
+  return `data:image/png;base64,${base64}`;
+}
+
 export type EmpresaPDF = {
   nombre: string;
   rut: string;
@@ -31,45 +40,34 @@ export type EgresoPDF = {
 
 /**
  * Genera el PDF de comprobante de entrega de EPP
- * - Reutilizable desde Dashboard y flujo automático de egreso
- * - Logo EPP Control (siempre)
- * - Logo empresa (si existe)
+ * ✔ Backend-safe (Node / Vercel)
+ * ✔ Reutilizable desde API y frontend
+ * ✔ Retorna Uint8Array (buffer, Node)
  */
-export async function generarPdfEntrega({
-  empresa,
-  egreso,
-  returnBlob = false,
-}: {
+export async function generarPdfEntrega(params: {
   empresa: EmpresaPDF;
   egreso: EgresoPDF;
-  returnBlob?: boolean;
-}) {
+}): Promise<Uint8Array> {
+  const { empresa, egreso } = params;
+
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
-
   let y = 20;
 
   // ─────────────────────────────────────────────
   // Logos encabezado
   // ─────────────────────────────────────────────
 
-  // Logo EPP Control (izquierda)
+  // Logo EPP Control (debe existir en /public/logoepp.png)
   doc.addImage("/logoepp.png", "PNG", 10, y, 30, 15);
 
-  // Logo empresa (derecha, opcional)
+  // Logo empresa (opcional)
   if (empresa.logo_url) {
     try {
-      const logoEmpresaBase64 = await fetchImageAsBase64(empresa.logo_url);
-      doc.addImage(
-        logoEmpresaBase64,
-        "PNG",
-        pageWidth - 40,
-        y,
-        30,
-        15
-      );
+      const base64Logo = await fetchImageAsBase64(empresa.logo_url);
+      doc.addImage(base64Logo, "PNG", pageWidth - 40, y, 30, 15);
     } catch {
-      // Si falla el logo empresa, no bloquea el PDF
+      // No bloquea el PDF si el logo falla
     }
   }
 
@@ -90,22 +88,38 @@ export async function generarPdfEntrega({
   // Título
   // ─────────────────────────────────────────────
   doc.setFontSize(14);
-  doc.text(
-    "COMPROBANTE DE ENTREGA DE EPP",
-    pageWidth / 2,
-    y,
-    { align: "center" }
-  );
+  doc.text("COMPROBANTE DE ENTREGA DE EPP", pageWidth / 2, y, {
+    align: "center",
+  });
   y += 10;
 
   // ─────────────────────────────────────────────
   // Texto legal
   // ─────────────────────────────────────────────
-  const fechaFormateada = egreso.fecha
-    .split("T")[0]
-    .split("-")
-    .reverse()
-    .join("/");
+  let fechaFormateada = "";
+  try {
+    // Defensive fallback for non-ISO dates
+    if (egreso.fecha && typeof egreso.fecha === "string") {
+      const [fechaIso] = egreso.fecha.split("T");
+      if (/^\d{4}-\d{2}-\d{2}$/.test(fechaIso)) {
+        fechaFormateada = fechaIso.split("-").reverse().join("/");
+      } else {
+        // Try Date parsing as fallback
+        const d = new Date(egreso.fecha);
+        if (!isNaN(d.getTime())) {
+          fechaFormateada = [
+            d.getDate().toString().padStart(2, "0"),
+            (d.getMonth() + 1).toString().padStart(2, "0"),
+            d.getFullYear(),
+          ].join("/");
+        } else {
+          fechaFormateada = egreso.fecha;
+        }
+      }
+    }
+  } catch {
+    fechaFormateada = egreso.fecha || "";
+  }
 
   doc.setFontSize(10);
   doc.text(
@@ -162,8 +176,11 @@ export async function generarPdfEntrega({
   y += 4;
 
   if (egreso.firmaBase64) {
-    doc.addImage(egreso.firmaBase64, "PNG", 10, y, 60, 25);
-    y += 30;
+    const normalizedFirma = normalizeBase64Image(egreso.firmaBase64);
+    if (normalizedFirma && /^data:image\/png;base64,/.test(normalizedFirma)) {
+      doc.addImage(normalizedFirma, "PNG", 10, y, 60, 25);
+      y += 30;
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -171,14 +188,7 @@ export async function generarPdfEntrega({
   // ─────────────────────────────────────────────
   const footerY = 270;
 
-  doc.addImage(
-    "/logoepp.png",
-    "PNG",
-    pageWidth / 2 - 15,
-    footerY,
-    30,
-    15
-  );
+  doc.addImage("/logoepp.png", "PNG", pageWidth / 2 - 15, footerY, 30, 15);
 
   doc.setFontSize(9);
   doc.text(
@@ -188,37 +198,22 @@ export async function generarPdfEntrega({
     { align: "center" }
   );
 
-  doc.text(
-    "www.eppcontrol.cl",
-    pageWidth / 2,
-    footerY + 25,
-    { align: "center" }
-  );
+  doc.text("www.eppcontrol.cl", pageWidth / 2, footerY + 25, {
+    align: "center",
+  });
 
   // ─────────────────────────────────────────────
-  // Guardar archivo
+  // Retornar buffer (Node compatible)
   // ─────────────────────────────────────────────
-  if (returnBlob) {
-    return doc.output("blob");
-  }
-
-  const fechaPDF = fechaFormateada.replace(/\//g, ".");
-  doc.save(
-    `${fechaPDF}_${egreso.trabajador.rut}_Entrega_EPP.pdf`
-  );
+  const buffer = doc.output("arraybuffer");
+  return new Uint8Array(buffer);
 }
 
 /**
- * Convierte una imagen remota (URL) a base64 para jsPDF
+ * Convierte una imagen remota a base64 (Node compatible)
  */
 async function fetchImageAsBase64(url: string): Promise<string> {
   const res = await fetch(url);
-  const blob = await res.blob();
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return `data:image/png;base64,${buffer.toString("base64")}`;
 }

@@ -1,455 +1,161 @@
 // app/dashboard/entregas/page.tsx
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
-import { generarPdfEntrega } from "@/app/utils/entrega-pdf";
-import { createBrowserClient } from "@supabase/ssr";
+import type React from "react";
+import { useEffect, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-export default function EntregasPage() {
-  const [nombre, setNombre] = useState("");
-  const [rut, setRut] = useState("");
-  const [centro, setCentro] = useState("");
-  const [categoria, setCategoria] = useState("");
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
-  const [firmaSeleccionada, setFirmaSeleccionada] = useState<string | null>(null);
-
-  const [egresos, setEgresos] = useState<Egreso[]>([]);
-
-  const [empresa, setEmpresa] = useState<{
+type Entrega = {
+  id: string;
+  fecha: string;
+  total_unidades: number;
+  costo_total_iva: number;
+  pdf_url: string | null;
+  trabajador: {
     nombre: string;
     rut: string;
-    logo_url?: string | null;
-  } | null>(null);
+  };
+  centro: string;
+};
 
-  // Sorting state
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+export default function EntregasPage() {
+  const [entregas, setEntregas] = useState<Entrega[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchEntregas = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      setLoading(true);
 
-      if (!user) return;
+      const { data: auth } = await supabaseBrowser.auth.getUser();
+      if (!auth?.user) return;
 
-      const { data: usuario } = await supabase
+      const { data: usuario } = await supabaseBrowser
         .from("usuarios")
         .select("empresa_id")
-        .eq("auth_user_id", user.id)
-        .single();
+        .eq("auth_user_id", auth.user.id)
+        .maybeSingle();
 
       if (!usuario?.empresa_id) return;
 
-      const { data: empresaData } = await supabase
-        .from("empresas")
-        .select("nombre, rut, logo_url")
-        .eq("id", usuario.empresa_id)
-        .single();
-
-      if (empresaData) {
-        setEmpresa({
-          nombre: empresaData.nombre,
-          rut: empresaData.rut,
-          logo_url: empresaData.logo_url,
-        });
-      }
-
-      const { data, error } = await supabase
+      const { data, error } = await supabaseBrowser
         .from("entregas")
         .select(`
           id,
           fecha_entrega,
-          firma_url,
-          trabajadores:trabajador_id (
-            nombre,
-            rut
-          ),
-          centros_trabajo:centro_id (
-            nombre
-          ),
-          entrega_items (
-            categoria,
-            nombre_epp,
-            talla,
-            cantidad,
-            costo_unitario_iva
-          )
+          total_unidades,
+          costo_total_iva,
+          pdf_url,
+          trabajadores:trabajador_id ( nombre, rut ),
+          centros_trabajo:centro_id ( nombre )
         `)
         .eq("empresa_id", usuario.empresa_id)
         .order("fecha_entrega", { ascending: false });
 
-      if (error || !data) return;
+      if (!error && data) {
+        const entregasFormateadas: Entrega[] = data.map((e: any) => ({
+          id: e.id,
+          fecha: e.fecha_entrega,
+          total_unidades: e.total_unidades,
+          costo_total_iva: e.costo_total_iva,
+          pdf_url: e.pdf_url ?? null,
+          trabajador: {
+            nombre: e.trabajadores?.[0]?.nombre ?? "",
+            rut: e.trabajadores?.[0]?.rut ?? "",
+          },
+          centro: e.centros_trabajo?.[0]?.nombre ?? "",
+        }));
 
-      const formateados = data.map((e: any) => ({
-        id: e.id,
-        fecha: e.fecha_entrega,
-        firmaBase64: e.firma_url,
-        trabajador: {
-          nombre: e.trabajadores?.nombre || "",
-          rut: e.trabajadores?.rut || "",
-          centro: e.centros_trabajo?.nombre || "",
-        },
-        items: e.entrega_items.map((item: any) => ({
-          categoria: item.categoria,
-          epp: item.nombre_epp,
-          tallaNumero: item.talla,
-          cantidad: item.cantidad,
-          costoTotal: item.costo_unitario_iva,
-        })),
-      }));
+        setEntregas(entregasFormateadas);
+      }
 
-      setEgresos(formateados);
+      setLoading(false);
     };
 
     fetchEntregas();
   }, []);
 
-  // Helper to handle sorting
-  function handleSort(key: string) {
-    if (sortKey === key) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDirection("asc");
-    }
+  if (loading) {
+    return <p className="text-sm text-zinc-500">Cargando entregas…</p>;
   }
 
-  // Filtering (date filter fixed: use Date objects and inclusive end date)
-  const entregasFiltradas = useMemo(() => {
-    return egresos.filter((e) => {
-      if (
-        nombre &&
-        !e.trabajador.nombre.toLowerCase().includes(nombre.toLowerCase())
-      )
-        return false;
-
-      if (rut) {
-        const rutFiltro = rut.replace(/\./g, "").toLowerCase();
-        const rutTrabajador = e.trabajador.rut
-          .replace(/\./g, "")
-          .toLowerCase();
-
-        if (!rutTrabajador.includes(rutFiltro)) return false;
-      }
-
-      if (
-        centro &&
-        !e.trabajador.centro.toLowerCase().includes(centro.toLowerCase())
-      )
-        return false;
-
-      const fechaEgresoDate = new Date(e.fecha);
-
-      if (desde) {
-        const desdeDate = new Date(desde + "T00:00:00");
-        if (fechaEgresoDate < desdeDate) return false;
-      }
-
-      if (hasta) {
-        const hastaDate = new Date(hasta + "T23:59:59");
-        if (fechaEgresoDate > hastaDate) return false;
-      }
-
-      return true;
-    });
-  }, [egresos, nombre, rut, centro, desde, hasta]);
-
-  // Compose flat rows with egreso + item for sorting
-  const rows = useMemo(() => {
-    // Filter by categoria if set
-    const filtered = categoria
-      ? entregasFiltradas
-          .map((e) => ({
-            ...e,
-            items: e.items.filter((item) => item.categoria === categoria),
-          }))
-          .filter((e) => e.items.length > 0)
-      : entregasFiltradas;
-    // Flatten rows
-    let allRows: {
-      egreso: Egreso;
-      item: Egreso["items"][0];
-      itemIdx: number;
-    }[] = [];
-    filtered.forEach((e) => {
-      e.items.forEach((item, idx) => {
-        allRows.push({ egreso: e, item, itemIdx: idx });
-      });
-    });
-    // Sorting logic
-    if (!sortKey) return allRows;
-    const getValue = (row: typeof allRows[0]) => {
-      switch (sortKey) {
-        case "fecha":
-          return row.egreso.fecha;
-        case "trabajador.nombre":
-          return row.egreso.trabajador.nombre;
-        case "trabajador.rut":
-          return row.egreso.trabajador.rut;
-        case "trabajador.centro":
-          return row.egreso.trabajador.centro;
-        case "item.categoria":
-          return row.item.categoria;
-        case "item.epp":
-          return row.item.epp;
-        case "item.tallaNumero":
-          return row.item.tallaNumero;
-        case "item.cantidad":
-          return row.item.cantidad;
-        default:
-          return "";
-      }
-    };
-    return allRows.slice().sort((a, b) => {
-      const va = getValue(a);
-      const vb = getValue(b);
-      if (typeof va === "number" && typeof vb === "number") {
-        return sortDirection === "asc" ? va - vb : vb - va;
-      }
-      // For date string, compare as dates
-      if (sortKey === "fecha") {
-        const da = new Date(va as string).getTime();
-        const db = new Date(vb as string).getTime();
-        return sortDirection === "asc" ? da - db : db - da;
-      }
-      // Default: string comparison
-      return sortDirection === "asc"
-        ? String(va).localeCompare(String(vb), "es")
-        : String(vb).localeCompare(String(va), "es");
-    });
-  }, [entregasFiltradas, categoria, sortKey, sortDirection]);
-
-  // For visual cue in header
-  const sortIndicator = (key: string) =>
-    sortKey === key ? (sortDirection === "asc" ? " ▲" : " ▼") : "";
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Entregas de EPP</h1>
-
-      <div className="flex flex-wrap gap-3">
+      <div className="flex justify-end">
         <button
-          onClick={() => window.print()}
-          className="rounded bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-800"
-        >
-          Descargar vista (PDF)
-        </button>
+          onClick={async () => {
+            const { data: auth } = await supabaseBrowser.auth.getUser();
+            if (!auth?.user) return;
 
-        <button
-          onClick={() => window.print()}
-          className="rounded border px-4 py-2 text-sm hover:bg-zinc-50"
+            const { data: usuario } = await supabaseBrowser
+              .from("usuarios")
+              .select("empresa_id")
+              .eq("auth_user_id", auth.user.id)
+              .maybeSingle();
+
+            if (!usuario?.empresa_id) return;
+
+            const url = `/api/reportes/entregas-excel?empresa_id=${usuario.empresa_id}`;
+            window.location.href = url;
+          }}
+          className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
         >
-          Descargar todas las entregas (PDF)
+          Exportar Excel
         </button>
       </div>
 
-      {firmaSeleccionada && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-lg p-4 max-w-md w-full">
-            <h2 className="text-lg font-semibold mb-2">
-              Firma del trabajador
-            </h2>
-
-            <img
-              src={firmaSeleccionada}
-              alt="Firma del trabajador"
-              className="border rounded w-full h-auto"
-            />
-
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setFirmaSeleccionada(null)}
-                className="rounded bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-800"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
+      {entregas.length === 0 && (
+        <p className="text-sm text-zinc-500">No hay entregas registradas.</p>
       )}
 
-      {/* FILTROS */}
-      <div className="grid grid-cols-1 gap-3 rounded border p-4 md:grid-cols-3">
-        <input
-          type="text"
-          placeholder="Nombre trabajador"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-          className="input"
-        />
-
-        <input
-          type="text"
-          placeholder="RUT"
-          value={rut}
-          onChange={(e) => setRut(e.target.value)}
-          className="input"
-        />
-
-        <input
-          type="text"
-          placeholder="Centro de trabajo"
-          value={centro}
-          onChange={(e) => setCentro(e.target.value)}
-          className="input"
-        />
-
-        <select
-          value={categoria}
-          onChange={(e) => setCategoria(e.target.value)}
-          className="input"
-        >
-          <option value="">Todas las categorías</option>
-          <option value="Cabeza">Cabeza</option>
-          <option value="Manos">Manos</option>
-          <option value="Ojos">Ojos</option>
-          <option value="Respiratoria">Respiratoria</option>
-          <option value="Pies">Pies</option>
-        </select>
-
-        <input
-          type="date"
-          value={desde}
-          onChange={(e) => setDesde(e.target.value)}
-          className="input"
-        />
-
-        <input
-          type="date"
-          value={hasta}
-          onChange={(e) => setHasta(e.target.value)}
-          className="input"
-        />
-      </div>
-
-      {/* TABLA */}
       <div className="overflow-x-auto rounded border">
         <table className="w-full text-sm">
           <thead className="bg-zinc-100">
             <tr>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("fecha")}
-                >
-                  Fecha{sortIndicator("fecha")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("trabajador.nombre")}
-                >
-                  Trabajador{sortIndicator("trabajador.nombre")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("trabajador.rut")}
-                >
-                  RUT{sortIndicator("trabajador.rut")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("trabajador.centro")}
-                >
-                  Centro{sortIndicator("trabajador.centro")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("item.categoria")}
-                >
-                  Categoría{sortIndicator("item.categoria")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("item.epp")}
-                >
-                  EPP{sortIndicator("item.epp")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("item.tallaNumero")}
-                >
-                  Talla / Nº{sortIndicator("item.tallaNumero")}
-                </button>
-              </th>
-              <th className="p-2 text-left">
-                <button
-                  type="button"
-                  className="font-semibold hover:underline"
-                  onClick={() => handleSort("item.cantidad")}
-                >
-                  Cant.{sortIndicator("item.cantidad")}
-                </button>
-              </th>
-              <th className="p-2 text-left">Firma</th>
+              <th className="p-2 text-left">Fecha</th>
+              <th className="p-2 text-left">Trabajador</th>
+              <th className="p-2 text-left">Centro</th>
+              <th className="p-2 text-right">Unidades</th>
+              <th className="p-2 text-right">Total IVA</th>
+              <th className="p-2 text-left">PDF</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="p-4 text-center text-zinc-500">
-                  No hay resultados
-                </td>
-              </tr>
-            )}
-            {rows.map((row) => (
-              <tr key={`${row.egreso.id}-${row.itemIdx}`} className="border-t">
+            {entregas.map((e) => (
+              <tr key={e.id} className="border-t">
                 <td className="p-2">
-                  {new Date(row.egreso.fecha).toLocaleDateString("es-CL")}
+                  {new Date(e.fecha).toLocaleDateString("es-CL")}
                 </td>
-                <td className="p-2">{row.egreso.trabajador.nombre}</td>
-                <td className="p-2">{row.egreso.trabajador.rut}</td>
-                <td className="p-2">{row.egreso.trabajador.centro}</td>
-                <td className="p-2">{row.item.categoria}</td>
-                <td className="p-2">{row.item.epp}</td>
-                <td className="p-2">{row.item.tallaNumero}</td>
-                <td className="p-2">{row.item.cantidad}</td>
                 <td className="p-2">
-                  <div className="flex gap-2">
-                    <button
-                      className="text-sky-600 underline"
-                      onClick={() => setFirmaSeleccionada(row.egreso.firmaBase64)}
-                    >
-                      Ver
-                    </button>
-                    <button
-                      className="text-zinc-700 underline"
-                      onClick={() => {
-                        if (!empresa) return;
-                        generarPdfEntrega({
-                          empresa,
-                          egreso: row.egreso,
-                        });
-                      }}
-                    >
-                      PDF
-                    </button>
-                  </div>
+                  {e.trabajador.nombre} · {e.trabajador.rut}
+                </td>
+                <td className="p-2">{e.centro}</td>
+                <td className="p-2 text-right">{e.total_unidades}</td>
+                <td className="p-2 text-right">
+                  ${e.costo_total_iva?.toLocaleString("es-CL")}
+                </td>
+                <td className="p-2">
+                  {e.pdf_url ? (
+                    <div className="flex gap-2">
+                      <a
+                        href={e.pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sky-600 underline"
+                      >
+                        Ver
+                      </a>
+                      <a
+                        href={e.pdf_url}
+                        download
+                        className="text-zinc-700 underline"
+                      >
+                        Descargar
+                      </a>
+                    </div>
+                  ) : (
+                    <span className="text-zinc-400">No disponible</span>
+                  )}
                 </td>
               </tr>
             ))}

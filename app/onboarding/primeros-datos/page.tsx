@@ -1,32 +1,19 @@
 // app/onboarding/primeros-datos/page.tsx
 "use client";
 
+import type React from "react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+export const dynamic = "force-dynamic";
 
 function normalizarRut(rut: string) {
   const limpio = rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
   const cuerpo = limpio.slice(0, -1);
   const dv = limpio.slice(-1);
   return `${cuerpo}-${dv}`;
-}
-
-// ─────────────────────────────────────────────
-// Utils
-// ─────────────────────────────────────────────
-function generarCodigoCentro(nombre: string) {
-  return nombre
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "_")
-    .replace(/_+/g, "_")
-    .slice(0, 10);
 }
 
 function validarRut(rut: string) {
@@ -61,7 +48,8 @@ export default function PrimerosDatosPage() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [nuevoCentro, setNuevoCentro] = useState("");
+  const [centros, setCentros] = useState<{ id: string; nombre: string }[]>([]);
+  const [centroId, setCentroId] = useState<string>("");
 
   const [trabajador, setTrabajador] = useState({
     nombre: "",
@@ -75,6 +63,8 @@ export default function PrimerosDatosPage() {
   // Obtener empresa_id desde Supabase
   // ─────────────────────────────────────────────
   useEffect(() => {
+    const supabase = supabaseBrowser;
+
     const fetchEmpresaId = async () => {
       const {
         data: { user },
@@ -90,7 +80,7 @@ export default function PrimerosDatosPage() {
         .from("usuarios")
         .select("empresa_id")
         .eq("auth_user_id", user.id)
-        .single();
+        .maybeSingle();
 
       if (error || !data?.empresa_id) {
         alert("No se pudo identificar la empresa.");
@@ -98,6 +88,16 @@ export default function PrimerosDatosPage() {
       }
 
       setEmpresaId(data.empresa_id);
+
+      const { data: centrosDB } = await supabase
+        .from("centros_trabajo")
+        .select("id, nombre")
+        .eq("empresa_id", data.empresa_id)
+        .eq("activo", true)
+        .order("nombre");
+
+      setCentros(centrosDB || []);
+
       setLoading(false);
     };
 
@@ -109,10 +109,13 @@ export default function PrimerosDatosPage() {
   // ─────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const supabase = supabaseBrowser;
+    if (!supabase) return;
+
     if (!empresaId || isSubmitting) return;
 
-    if (!nuevoCentro.trim()) {
-      alert("Debes ingresar un centro de trabajo.");
+    if (!centroId) {
+      alert("Debes seleccionar un centro de trabajo.");
       return;
     }
 
@@ -124,31 +127,13 @@ export default function PrimerosDatosPage() {
     setIsSubmitting(true);
 
     try {
-      // 1️⃣ Crear centro de trabajo principal
-      const codigoCentro = generarCodigoCentro(nuevoCentro);
-
-      const { data: centro, error: centroError } = await supabase
-        .from("centros_trabajo")
-        .insert({
-          empresa_id: empresaId,
-          nombre: nuevoCentro.trim(),
-          codigo: codigoCentro,
-          activo: true,
-        })
-        .select()
-        .single();
-
-      if (centroError || !centro) {
-        throw new Error("Error creando centro de trabajo");
-      }
-
       // 2️⃣ Crear trabajador manual (opcional)
       if (trabajador.nombre && trabajador.rut) {
         const rutNormalizado = normalizarRut(trabajador.rut);
 
         const { error } = await supabase.from("trabajadores").insert({
           empresa_id: empresaId,
-          centro_id: centro.id,
+          centro_id: centroId,
           nombre: trabajador.nombre,
           rut: rutNormalizado,
           email: trabajador.correo || null,
@@ -164,6 +149,14 @@ export default function PrimerosDatosPage() {
         .from("empresas")
         .update({ onboarding_completado: true })
         .eq("id", empresaId);
+
+      // 🔐 Reforzar sesión antes de ir al dashboard (auto-login robusto)
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session) {
+        await supabase.auth.refreshSession();
+      }
 
       alert("Primeros datos guardados correctamente");
       router.replace("/dashboard");
@@ -205,14 +198,27 @@ export default function PrimerosDatosPage() {
           {/* CENTRO DE TRABAJO */}
           <section>
             <h2 className="font-semibold text-lg mb-2">Centro de trabajo</h2>
-            <input
-              placeholder="Nombre del centro de trabajo (ej: Casa Matriz, Planta Norte)"
+            <select
               className="input"
-              value={nuevoCentro}
-              onChange={(e) => setNuevoCentro(e.target.value)}
-            />
+              value={centroId}
+              onChange={(e) => setCentroId(e.target.value)}
+            >
+              <option value="">Selecciona un centro de trabajo</option>
+              {centros.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
+            {centros.length === 0 && (
+              <p className="mt-2 text-sm text-red-600">
+                Aún no tienes centros de trabajo creados. Debes crearlos primero en la sección
+                <strong> Centros de trabajo</strong> del panel antes de continuar.
+              </p>
+            )}
             <p className="text-xs text-zinc-500 mt-1">
-              Podrás crear y administrar más centros de trabajo más adelante.
+              Los centros de trabajo se crean y gestionan únicamente desde el panel.
+              Esto evita errores de escritura y duplicados en cargas posteriores.
             </p>
           </section>
 
@@ -278,7 +284,7 @@ export default function PrimerosDatosPage() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || centros.length === 0}
             className="w-full bg-sky-600 text-white rounded-xl py-3 hover:bg-sky-700"
           >
             Finalizar configuración

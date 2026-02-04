@@ -1,36 +1,49 @@
 // app/api/egresos/route.ts
+// API de egresos – C6
+// Orquestador backend: delega FIFO y transacción 100% a PostgreSQL
 
-import { generarPdfEntrega } from "@/app/utils/entrega-pdf";
-import { guardarPdfEnStorage } from "@/app/utils/guardar-pdf-storage";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { enviarCorreosEgreso } from "@/app/utils/enviar-mail-egreso";
+import { generarPdfEntrega } from "@/utils/entrega-pdf";
+import { guardarPdfEnStorage } from "@/utils/guardar-pdf-storage";
+import { enviarCorreosEgreso } from "@/utils/enviar-mail-egreso";
 
 /**
  * POST /api/egresos
- * Flujo base de egreso:
+ * Flujo:
  * 1. Validar payload
- * 2. Crear egreso
- * 3. Crear ítems del egreso
- * 4. Generar PDF automático
- * 5. Guardar PDF en Storage
- * 6. Enviar correos
+ * 2. Ejecutar registrar_egreso_fifo (RPC)
+ * 3. Retornar resultado
  */
 export async function POST(req: Request) {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
   try {
     const body = await req.json();
+
+    const idempotencyKey = req.headers.get("Idempotency-Key");
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: "Falta Idempotency-Key en el header" },
+        { status: 400 }
+      );
+    }
 
     const {
       empresa_id,
       usuario_id,
       trabajador_id,
       centro_id,
+      firma_url,
       items,
-      firma_base64,
-      fecha,
     } = body;
 
+    // ─────────────────────────────────────────────
     // 1️⃣ Validaciones mínimas
+    // ─────────────────────────────────────────────
     if (
       !empresa_id ||
       !usuario_id ||
@@ -40,126 +53,245 @@ export async function POST(req: Request) {
       items.length === 0
     ) {
       return NextResponse.json(
-        { error: "Datos de egreso incompletos" },
+        { error: "Payload incompleto" },
         { status: 400 }
       );
     }
 
-    // 2️⃣ Cliente admin (service role)
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    // ─────────────────────────────────────────────
+    // Validación explícita de cada item en items
+    // ─────────────────────────────────────────────
+    for (const item of items) {
+      if (
+        !item ||
+        typeof item.categoria !== "string" ||
+        item.categoria.trim() === "" ||
+        typeof item.nombre_epp !== "string" ||
+        item.nombre_epp.trim() === "" ||
+        typeof item.cantidad !== "number" ||
+        item.cantidad <= 0
+      ) {
+        return NextResponse.json(
+          { error: "Item inválido en items" },
+          { status: 400 }
+        );
+      }
+    }
+
+    const { data: existente, error: idemError } = await supabase
+      .from("egresos_idempotencia")
+      .select("entrega_id")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+
+    if (idemError) {
+      throw idemError;
+    }
+
+    if (existente?.entrega_id) {
+      return NextResponse.json(
+        {
+          ok: true,
+          entrega_id: existente.entrega_id,
+          idempotent: true,
+        },
+        { status: 200 }
+      );
+    }
+
+    const { error: insertIdemError } = await supabase
+      .from("egresos_idempotencia")
+      .insert({
+        idempotency_key: idempotencyKey,
+        empresa_id,
+        usuario_id,
+      });
+
+    if (insertIdemError) {
+      // 23505 = unique_violation (reintento concurrente con misma idempotency key)
+      if (insertIdemError.code === "23505") {
+        const { data: existente2, error: idemError2 } = await supabase
+          .from("egresos_idempotencia")
+          .select("entrega_id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+
+        if (idemError2) throw idemError2;
+
+        if (existente2?.entrega_id) {
+          return NextResponse.json(
+            { ok: true, entrega_id: existente2.entrega_id, idempotent: true },
+            { status: 200 }
+          );
+        }
+
+        // Otro request sigue procesando la misma llave
+        return NextResponse.json(
+          {
+            error:
+              "Solicitud duplicada en proceso. Intenta nuevamente en unos segundos.",
+          },
+          { status: 409 }
+        );
+      }
+
+      throw insertIdemError;
+    }
+
+    // ─────────────────────────────────────────────
+    // 2️⃣ Ejecutar FIFO productivo en PostgreSQL
+    // ─────────────────────────────────────────────
+    const { data, error } = await supabase.rpc(
+      "registrar_egreso_fifo",
+      {
+        p_empresa_id: empresa_id,
+        p_usuario_id: usuario_id,
+        p_trabajador_id: trabajador_id,
+        p_centro_id: centro_id,
+        p_firma_url: firma_url,
+        p_items: items,
+      }
     );
 
-    // 3️⃣ Crear egreso
-    const { data: egreso, error: egresoError } = await supabaseAdmin
-      .from("egresos")
-      .insert({
-        empresa_id,
-        trabajador_id,
-        centro_id,
-        usuario_id,
-        fecha: fecha || new Date().toISOString(),
-        firma_base64: firma_base64 || null,
-      })
-      .select()
+    if (error) {
+      console.error("RPC FIFO ERROR:", error);
+      return NextResponse.json(
+        { error: error.message || "Error ejecutando egreso FIFO" },
+        { status: 500 }
+      );
+    }
+
+    if (!data) {
+      console.error("RPC FIFO ERROR: No data returned");
+      return NextResponse.json(
+        { error: "No se recibió respuesta del servidor" },
+        { status: 500 }
+      );
+    }
+
+    const entregaId = data.entrega_id;
+
+    const { error: updateIdemError } = await supabase
+      .from("egresos_idempotencia")
+      .update({ entrega_id: entregaId })
+      .eq("idempotency_key", idempotencyKey);
+
+    if (updateIdemError) {
+      throw updateIdemError;
+    }
+
+    // ─────────────────────────────────────────────
+    // 2️⃣.1 Generar PDF automático post-RPC
+    // ─────────────────────────────────────────────
+
+    // data debe traer: entrega_id, total_unidades, costo_total_iva
+    // Obtener datos completos de la entrega para el PDF
+    const { data: entregaData, error: entregaError } = await supabase
+      .from("entregas")
+      .select(`
+        id,
+        fecha_entrega,
+        firma_url,
+        costo_total_iva,
+        total_unidades,
+        empresas:empresa_id ( nombre, rut, logo_url ),
+        trabajadores:trabajador_id ( nombre, rut, email ),
+        centros_trabajo:centro_id ( nombre ),
+        entrega_items (
+          categoria,
+          nombre_epp,
+          talla,
+          cantidad
+        )
+      `)
+      .eq("id", entregaId)
       .single();
 
-    if (egresoError || !egreso) {
-      console.error("EGRESO ERROR:", egresoError);
-      return NextResponse.json(
-        { error: "Error creando egreso" },
-        { status: 500 }
-      );
+    if (entregaError || !entregaData) {
+      throw new Error("No se pudo obtener la entrega para generar el PDF");
     }
 
-    // 4️⃣ Crear ítems del egreso
-    const itemsInsert = items.map((item: any) => ({
-      egreso_id: egreso.id,
-      empresa_id,
-      categoria: item.categoria,
-      epp: item.epp,
-      talla_numero: item.tallaNumero || null,
-      cantidad: item.cantidad,
-      costo_unitario: item.costoUnitario || null,
-      costo_total: item.costoTotal || null,
-    }));
-
-    const { error: itemsError } = await supabaseAdmin
-      .from("egresos_items")
-      .insert(itemsInsert);
-
-    if (itemsError) {
-      console.error("ITEMS ERROR:", itemsError);
-      return NextResponse.json(
-        { error: "Error creando ítems del egreso" },
-        { status: 500 }
-      );
-    }
-
-    // 5️⃣ Generar PDF automático del egreso
-    const empresa = {
-      nombre: body.empresa_nombre,
-      rut: body.empresa_rut,
-      logo_url: body.empresa_logo_url || null,
-    };
-
-    const egresoPdfData = {
-      id: egreso.id,
-      fecha: egreso.fecha,
-      trabajador: {
-        nombre: body.trabajador_nombre,
-        rut: body.trabajador_rut,
-        centro: body.centro_nombre,
+    // Armar estructura PDF
+    const pdfBuffer = await generarPdfEntrega({
+      empresa: {
+        nombre: entregaData.empresas[0]?.nombre,
+        rut: entregaData.empresas[0]?.rut,
+        logo_url: entregaData.empresas[0]?.logo_url,
       },
-      items: items.map((item: any) => ({
-        categoria: item.categoria,
-        epp: item.epp,
-        tallaNumero: item.tallaNumero || null,
-        cantidad: item.cantidad,
-      })),
-      firmaBase64: firma_base64 || null,
-    };
-
-    const pdfBlob = await generarPdfEntrega({
-      empresa,
-      egreso: egresoPdfData,
-      returnBlob: true,
+      egreso: {
+        id: entregaData.id,
+        fecha: entregaData.fecha_entrega,
+        trabajador: {
+          nombre: entregaData.trabajadores[0]?.nombre,
+          rut: entregaData.trabajadores[0]?.rut,
+          centro: entregaData.centros_trabajo[0]?.nombre,
+        },
+        items: entregaData.entrega_items.map((i: any) => ({
+          categoria: i.categoria,
+          epp: i.nombre_epp,
+          tallaNumero: i.talla,
+          cantidad: i.cantidad,
+        })),
+        firmaBase64: entregaData.firma_url,
+      },
     });
 
-    // 6️⃣ Guardar PDF en Supabase Storage
-    await guardarPdfEnStorage({
+    // Guardar PDF en Storage
+    const { path } = await guardarPdfEnStorage({
       empresa_id,
-      egreso_id: egreso.id,
-      pdfBlob,
+      egreso_id: entregaId,
+      pdfBuffer: Buffer.from(pdfBuffer),
     });
 
-    // 7️⃣ Enviar correos
-    let correosEnviados = false;
-    try {
-      await enviarCorreosEgreso({
-        empresa,
-        egreso: egresoPdfData,
-        pdfBlob,
-        correos: body.correos || [],
-      });
-      correosEnviados = true;
-    } catch (emailError) {
-      console.error("ERROR AL ENVIAR CORREOS:", emailError);
+    // Persistir URL del PDF en la entrega
+    const { error: pdfUpdateError } = await supabase
+      .from("entregas")
+      .update({ pdf_url: path })
+      .eq("id", entregaId);
+
+    if (pdfUpdateError) {
+      throw new Error("No se pudo guardar la URL del PDF");
     }
 
-    // 8️⃣ Respuesta base (PDF, storage y correos se agregan luego)
+    // ─────────────────────────────────────────────
+    // 2️⃣.2 Envío de correos post-egreso (D4)
+    // ─────────────────────────────────────────────
+    try {
+      // Obtener correo del administrador (usuario)
+      const { data: usuarioMail } = await supabase
+        .from("usuarios")
+        .select("email")
+        .eq("id", usuario_id)
+        .single();
+
+      await enviarCorreosEgreso({
+        pdf_url: path,
+        empresa: {
+          nombre: entregaData.empresas[0]?.nombre,
+        },
+        trabajador: {
+          nombre: entregaData.trabajadores[0]?.nombre,
+          rut: entregaData.trabajadores[0]?.rut,
+          email: entregaData.trabajadores[0]?.email ?? null,
+        },
+        emailAdmin: usuarioMail?.email,
+      });
+    } catch (mailError) {
+      // No rompe el flujo principal del egreso
+      console.error("ERROR ENVÍO CORREOS EGRESO:", mailError);
+    }
+
+    // ─────────────────────────────────────────────
+    // 3️⃣ Respuesta
+    // ─────────────────────────────────────────────
     return NextResponse.json({
       ok: true,
-      egreso_id: egreso.id,
-      pdf_generado: true,
-      correos_enviados: correosEnviados,
-      message: "Egreso creado correctamente",
-    });
+      ...data,
+    }, { status: 201 });
   } catch (err: any) {
-    console.error("EGRESOS POST ERROR:", err);
+    console.error("EGRESOS API ERROR:", err);
     return NextResponse.json(
-      { error: "Error inesperado en egreso" },
+      { error: err.message || "Error inesperado en egresos" },
       { status: 500 }
     );
   }

@@ -10,9 +10,9 @@ import { createClient } from "@supabase/supabase-js";
 export async function guardarPdfEnStorage(params: {
   empresa_id: string;
   egreso_id: string;
-  pdfBlob: Blob;
+  pdfBuffer: Buffer;
 }) {
-  const { empresa_id, egreso_id, pdfBlob } = params;
+  const { empresa_id, egreso_id, pdfBuffer } = params;
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,7 +23,7 @@ export async function guardarPdfEnStorage(params: {
 
   const { error } = await supabase.storage
     .from("egresos-pdf")
-    .upload(filePath, pdfBlob, {
+    .upload(filePath, pdfBuffer, {
       contentType: "application/pdf",
       upsert: true,
     });

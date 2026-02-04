@@ -1,16 +1,14 @@
 // app/dashboard/stock/page.tsx
 "use client";
 
+import type React from "react";
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { getStockDesdeFIFO } from "@/app/utils/fifo";
-import { updateStockCritico, getStockCriticos } from "@/app/utils/stock";
 
 type StockItem = {
   id: string;
   categoria: string;
   nombre: string;
-  talla?: string | null;
+  talla: string | null;
   stock: number;
   stockCritico: number;
 };
@@ -21,23 +19,24 @@ export default function StockPage() {
   const [editValue, setEditValue] = useState<number>(0);
 
   useEffect(() => {
-    const fifoStock = getStockDesdeFIFO();
-    const criticos = getStockCriticos();
+    const loadStock = async () => {
+      const res = await fetch("/api/stock");
+      if (!res.ok) return;
 
-    const itemsFormateados: StockItem[] = fifoStock.map((item) => {
-      const key = `${item.categoria}|${item.nombreEpp}|${item.talla || ""}`;
+      const data = await res.json();
+      setItems(
+        data.map((item: any) => ({
+          id: item.id,
+          categoria: item.categoria,
+          nombre: item.nombre,
+          talla: item.talla,
+          stock: item.stock_total,
+          stockCritico: item.stock_critico,
+        }))
+      );
+    };
 
-      return {
-        id: key,
-        categoria: item.categoria,
-        nombre: item.nombreEpp,
-        talla: item.talla,
-        stock: item.cantidad,
-        stockCritico: criticos[key] ?? 0,
-      };
-    });
-
-    setItems(itemsFormateados);
+    loadStock();
   }, []);
 
   const getEstado = (item: StockItem) => {
@@ -102,24 +101,24 @@ export default function StockPage() {
                           />
                           <button
                             className="text-green-600 text-sm font-semibold"
-                            onClick={() => {
-                              try {
-                                updateStockCritico({
-                                  id: item.id,
-                                  stockCritico: editValue,
-                                });
-                                setItems((prev) =>
-                                  prev.map((i) =>
-                                    i.id === item.id
-                                      ? { ...i, stockCritico: editValue }
-                                      : i
-                                  )
-                                );
-                                setEditingId(null);
-                                alert("Stock crítico actualizado correctamente");
-                              } catch (err) {
-                                console.error(err);
+                            onClick={async () => {
+                              const res = await fetch(`/api/stock/${item.id}/critico`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ stock_critico: editValue }),
+                              });
+
+                              if (!res.ok) {
+                                alert("Error al actualizar stock crítico");
+                                return;
                               }
+
+                              setItems((prev) =>
+                                prev.map((i) =>
+                                  i.id === item.id ? { ...i, stockCritico: editValue } : i
+                                )
+                              );
+                              setEditingId(null);
                             }}
                           >
                             Guardar

@@ -4,15 +4,22 @@
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import type React from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+export const dynamic = "force-dynamic";
 
 export default function ConfiguracionPage() {
   const router = useRouter();
+
+  type EmpresaUpdate = {
+    email_gerencia: string;
+    email_alertas: string | null;
+    stock_critico_activo: boolean;
+    alertas_activas: boolean;
+    frecuencia_alertas: string;
+    onboarding_configuracion_completa: boolean;
+  };
 
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,16 +34,24 @@ export default function ConfiguracionPage() {
     correoGerencia: "",
   });
 
-  // 👉 Regla clara: solo se puede continuar si hay empresaId + correo de gerencia
-  const puedeContinuar =
-    !!empresaId && config.correoGerencia.trim().length > 0;
+  const correoGerenciaValido =
+    config.correoGerencia.trim().length > 0 &&
+    config.correoGerencia.trim() !== emailUsuario;
+
+  // 👉 Regla clara: solo se puede continuar si hay empresaId + correo de gerencia válido
+  const puedeContinuar = !!empresaId && correoGerenciaValido;
 
   useEffect(() => {
     const fetchEmpresaId = async () => {
+      type UsuarioEmpresaRow = {
+        empresa_id: string;
+        email: string | null;
+      };
+
       const {
         data: { user },
         error: userError,
-      } = await supabase.auth.getUser();
+      } = await supabaseBrowser.auth.getUser();
 
       if (userError || !user) {
         alert("Sesión inválida. Inicia sesión nuevamente.");
@@ -44,11 +59,11 @@ export default function ConfiguracionPage() {
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await supabaseBrowser
         .from("usuarios")
         .select("empresa_id, email")
         .eq("auth_user_id", user.id)
-        .single();
+        .maybeSingle<UsuarioEmpresaRow>();
 
       if (error || !data?.empresa_id) {
         alert("No se pudo identificar la empresa asociada al usuario.");
@@ -102,8 +117,7 @@ export default function ConfiguracionPage() {
       : null;
       
 
-    const { error } = await supabase
-      .from("empresas")
+    const { error } = await (supabaseBrowser.from("empresas") as any)
       .update({
         email_gerencia: config.correoGerencia,
         email_alertas: correoAlertasFinal,
@@ -111,7 +125,7 @@ export default function ConfiguracionPage() {
         alertas_activas: config.alertasCorreo,
         frecuencia_alertas: config.frecuencia,
         onboarding_configuracion_completa: true,
-      })
+      } as any)
       .eq("id", empresaId);
 
     if (error) {
@@ -134,13 +148,12 @@ export default function ConfiguracionPage() {
       return;
     }
 
-    const { error } = await supabase
-      .from("empresas")
+    const { error } = await (supabaseBrowser.from("empresas") as any)
       .update({
         email_gerencia: config.correoGerencia,
         alertas_activas: false,
         onboarding_configuracion_completa: true,
-      })
+      } as any)
       .eq("id", empresaId);
 
     if (error) {
@@ -189,6 +202,14 @@ export default function ConfiguracionPage() {
             <p className="text-sm text-zinc-500 mb-2">
               Obligatorio. Recibirá reportes mensuales de gestión.
             </p>
+            <p className="text-xs text-zinc-500 mb-2">
+              Debe ser distinto al correo del usuario administrador.
+            </p>
+            {config.correoGerencia && config.correoGerencia === emailUsuario && (
+              <p className="text-xs text-red-600">
+                El correo de gerencia debe ser distinto al correo del usuario administrador.
+              </p>
+            )}
             <input
               type="email"
               name="correoGerencia"

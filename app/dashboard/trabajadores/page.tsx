@@ -2,7 +2,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getPlanUsage } from "@/app/utils/plan";
+import type React from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 
 type Trabajador = {
@@ -10,10 +11,10 @@ type Trabajador = {
   nombre: string;
   rut: string;
   email?: string;
-  centro: string;
+  centro_id: string;
   talla?: string;
   calzado?: string;
-  creadoEn: string;
+  created_at: string;
   activo: boolean;
 };
 
@@ -23,14 +24,10 @@ type CentroTrabajo = {
   activo: boolean;
 };
 
-type Egreso = {
-  fecha: string;
-  trabajador: {
-    rut: string;
-    nombre: string;
-    centro: string;
-  };
-  costoTotalEgreso?: number;
+type EntregaResumen = {
+  fecha_entrega: string; // date
+  trabajador_id: string;
+  costo_total_iva: number | null;
 };
 
 function validarRut(rut: string) {
@@ -54,19 +51,6 @@ function validarRut(rut: string) {
   return dv === dvEsperado;
 }
 
-function getTrabajadores(): Trabajador[] {
-  if (typeof window === "undefined") return [];
-  return JSON.parse(localStorage.getItem("trabajadores") || "[]");
-}
-
-function saveTrabajadores(data: Trabajador[]) {
-  localStorage.setItem("trabajadores", JSON.stringify(data));
-}
-
-function getEgresos(): Egreso[] {
-  if (typeof window === "undefined") return [];
-  return JSON.parse(localStorage.getItem("egresos") || "[]");
-}
 
 export default function TrabajadoresPage() {
   const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
@@ -79,147 +63,249 @@ export default function TrabajadoresPage() {
 
   const [centros, setCentros] = useState<CentroTrabajo[]>([]);
   const [filtroEstado, setFiltroEstado] = useState<"activos" | "inactivos" | "todos">("activos");
+  const [planUsage, setPlanUsage] = useState<{alcanzado: boolean, limite: number}>({alcanzado: false, limite: 0});
+  const [entregasResumen, setEntregasResumen] = useState<EntregaResumen[]>([]);
+  const [empresaId, setEmpresaId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<"nombre" | "rut" | "estado" | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  const planUsage = useMemo(() => getPlanUsage(), []);
 
   useEffect(() => {
-    setTrabajadores(getTrabajadores());
+    // Get current user and empresa_id
+    async function fetchUserData() {
+      const { data: { user } } = await supabaseBrowser.auth.getUser();
+      if (!user) {
+        // Not authenticated
+        setTrabajadores([]);
+        setCentros([]);
+        setEmpresaId(null);
+        return;
+      }
+      // Fetch empresa_id from usuarios table, not user_metadata
+      const { data: usuarioRow, error: usuarioError } = await supabaseBrowser
+        .from("usuarios")
+        .select("empresa_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
 
-    const storedCentros = JSON.parse(
-      localStorage.getItem("centrosTrabajo") || "[]"
-    );
-    setCentros(storedCentros.filter((c: CentroTrabajo) => c.activo));
+      if (usuarioError || !usuarioRow?.empresa_id) {
+        setTrabajadores([]);
+        setCentros([]);
+        setEmpresaId(null);
+        return;
+      }
+
+      const empresa_id = usuarioRow.empresa_id;
+      setEmpresaId(empresa_id);
+
+      // Fetch trabajadores
+      const { data: trabajadoresData, error: trabajadoresError } = await supabaseBrowser
+        .from("trabajadores")
+        .select("*")
+        .eq("empresa_id", empresa_id)
+        .order("nombre");
+      if (!trabajadoresError && trabajadoresData) {
+        setTrabajadores(trabajadoresData as Trabajador[]);
+      }
+      // Fetch centros de trabajo
+      const { data: centrosData, error: centrosError } = await supabaseBrowser
+        .from("centros_trabajo")
+        .select("*")
+        .eq("empresa_id", empresa_id)
+        .eq("activo", true);
+      if (!centrosError && centrosData) {
+        setCentros(centrosData as CentroTrabajo[]);
+      }
+      // Fetch entregas (para métricas de gasto)
+      const { data: entregasData, error: entregasError } = await supabaseBrowser
+        .from("entregas")
+        .select("fecha_entrega, trabajador_id, costo_total_iva")
+        .eq("empresa_id", empresa_id);
+      if (!entregasError && entregasData) {
+        setEntregasResumen(entregasData as EntregaResumen[]);
+      }
+      // Fetch plan usage from API
+      try {
+        const res = await fetch("/api/plan-usage");
+        if (res.ok) {
+          const usage = await res.json();
+          setPlanUsage(usage);
+        }
+      } catch {}
+    }
+    fetchUserData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function agregarTrabajador() {
+  async function agregarTrabajador() {
     if (!nuevo.nombre || !nuevo.rut || !nuevo.centro) {
       alert("Debes completar nombre, RUT y centro de trabajo.");
       return;
     }
-
-    const rutNormalizado = nuevo.rut
-      .replace(/\./g, "")
-      .toUpperCase();
-
+    const rutNormalizado = nuevo.rut.replace(/\./g, "").toUpperCase();
     if (!validarRut(rutNormalizado)) {
       alert("El RUT ingresado no es válido. Usa formato XXXXXXXX-X.");
       return;
     }
-
-    const actualizado = [
-      ...trabajadores,
-      {
-        id: crypto.randomUUID(),
-        nombre: nuevo.nombre,
-        rut: rutNormalizado,
-        email: nuevo.email || undefined,
-        centro: nuevo.centro,
-        creadoEn: new Date().toISOString(),
-        activo: true,
-      },
-    ];
-
-    setTrabajadores(actualizado);
-    saveTrabajadores(actualizado);
+    if (!empresaId) return;
+    // Insert trabajador in Supabase
+    const { data, error } = await supabaseBrowser
+      .from("trabajadores")
+      .insert([
+        {
+          nombre: nuevo.nombre,
+          rut: rutNormalizado,
+          email: nuevo.email || null,
+          centro_id: nuevo.centro,
+          activo: true,
+          empresa_id: empresaId,
+        },
+      ])
+      .select();
+    if (error) {
+      alert("Error al agregar trabajador: " + error.message);
+      return;
+    }
+    // Refresh list
+    if (data && data.length > 0) {
+      setTrabajadores([...trabajadores, data[0] as Trabajador]);
+    }
     setNuevo({ nombre: "", rut: "", email: "", centro: "" });
   }
 
-  function actualizarCampo(
+  async function actualizarCampo(
     id: string,
     campo: keyof Trabajador,
     valor: string
   ) {
+    // Update in Supabase
+    const { error } = await supabaseBrowser
+      .from("trabajadores")
+      .update({ [campo]: valor })
+      .eq("id", id);
+    if (error) {
+      alert("Error al actualizar trabajador: " + error.message);
+      return;
+    }
+    // Update local state
     const actualizado = trabajadores.map((t) =>
       t.id === id ? { ...t, [campo]: valor } : t
     );
     setTrabajadores(actualizado);
-    saveTrabajadores(actualizado);
   }
 
-  function darDeBajaTrabajador(id: string) {
+  async function darDeBajaTrabajador(id: string) {
     if (!window.confirm("¿Estás seguro de dar de baja a este trabajador? Esta acción no se puede deshacer.")) {
+      return;
+    }
+    // Update in Supabase
+    const { error } = await supabaseBrowser
+      .from("trabajadores")
+      .update({ activo: false })
+      .eq("id", id);
+    if (error) {
+      alert("Error al dar de baja: " + error.message);
       return;
     }
     const actualizado = trabajadores.map((t) =>
       t.id === id ? { ...t, activo: false } : t
     );
     setTrabajadores(actualizado);
-    saveTrabajadores(actualizado);
   }
 
-  function handleCargaMasiva(
+  async function handleCargaMasiva(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !empresaId) return;
 
-    const centrosValidos = centros.map((c) =>
-      c.nombre.trim().toLowerCase()
-    );
+    // Centros normalizados solo para matching (no para guardar)
+    const centrosValidos = centros.map((c) => ({
+      id: c.id,
+      nombreNorm: c.nombre
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, ""),
+    }));
 
     const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      const rows = text.split("\n").slice(1);
+
+    reader.onload = async () => {
+      let text = "";
+
+      if (reader.result instanceof ArrayBuffer) {
+        // Intentar UTF-8 primero, fallback ISO-8859-1
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(reader.result);
+        } catch {
+          text = new TextDecoder("iso-8859-1").decode(reader.result);
+        }
+      } else if (typeof reader.result === "string") {
+        text = reader.result;
+      }
+
+      text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+      const rows = text
+        .split("\n")
+        .slice(1)
+        .filter((r) => r.trim() !== "");
 
       const errores: string[] = [];
-      const nuevos: Trabajador[] = [];
+      const nuevos: any[] = [];
 
-      rows.forEach((r, index) => {
-        const c = r.split(";");
-        if (c.length < 6) return;
+      rows.forEach((row, index) => {
+        const cols = row.split(";");
+        if (cols.length < 6) return;
 
-        const nombre = c[0]?.trim();
-        const rutRaw = c[1]?.trim() || "";
+        const nombre = cols[0]?.trim();
+        const rutRaw = cols[1]?.trim() || "";
         const rut = rutRaw.replace(/\./g, "").toUpperCase();
-        const email = c[2]?.trim() || undefined;
-        const centroRaw = c[3]?.trim();
-        const talla = c[4]?.trim();
-        const calzado = c[5]?.trim();
+        const email = cols[2]?.trim() || null;
+        const centroRaw = cols[3]?.trim();
+        const talla = cols[4]?.trim() || null;
+        const calzado = cols[5]?.trim() || null;
 
         if (!nombre || !rut || !centroRaw) return;
 
         if (!validarRut(rut)) {
-          errores.push(
-            `Fila ${index + 2}: RUT inválido (${rutRaw})`
-          );
+          errores.push(`Fila ${index + 2}: RUT inválido (${rutRaw})`);
           return;
         }
 
-        const centroNormalizado = centroRaw
-          .trim()
-          .toLowerCase();
+        const centroNorm = centroRaw
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
 
-        if (!centrosValidos.includes(centroNormalizado)) {
+        const centroMatch = centrosValidos.find(
+          (c) => c.nombreNorm === centroNorm
+        );
+
+        if (!centroMatch) {
           errores.push(
             `Fila ${index + 2}: centro inexistente (${centroRaw})`
           );
           return;
         }
 
-        const centroFinal = centros.find(
-          (c) =>
-            c.nombre.trim().toLowerCase() ===
-            centroNormalizado
-        )!.nombre;
-
         nuevos.push({
-          id: crypto.randomUUID(),
-          nombre,
+          nombre, // se guarda con acentos intactos
           rut,
           email,
-          centro: centroFinal,
+          centro_id: centroMatch.id,
           talla,
           calzado,
-          creadoEn: new Date().toISOString(),
           activo: true,
+          empresa_id: empresaId,
         });
       });
 
       if (errores.length > 0) {
         alert(
-          "No se pudo completar la carga:\n\n" +
-            errores.join("\n")
+          "No se pudo completar la carga:\n\n" + errores.join("\n")
         );
         return;
       }
@@ -229,63 +315,102 @@ export default function TrabajadoresPage() {
         return;
       }
 
-      const actualizados = [...trabajadores, ...nuevos];
-      setTrabajadores(actualizados);
-      saveTrabajadores(actualizados);
+      const { data, error } = await supabaseBrowser
+        .from("trabajadores")
+        .insert(nuevos)
+        .select();
+
+      if (error) {
+        alert("Error al cargar trabajadores: " + error.message);
+        return;
+      }
+
+      if (data) {
+        setTrabajadores((prev) => [...prev, ...(data as Trabajador[])]);
+      }
+
+      alert("Carga masiva completada correctamente.");
     };
 
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   }
 
-  const egresos = useMemo(() => getEgresos(), []);
-
-  function gastoMes(rut: string) {
+  function gastoMes(trabajadorId: string) {
     const ahora = new Date();
-    return egresos
+    return entregasResumen
       .filter((e) => {
-        const d = new Date(e.fecha);
+        const d = new Date(e.fecha_entrega);
         return (
-          e.trabajador.rut === rut &&
+          e.trabajador_id === trabajadorId &&
           d.getMonth() === ahora.getMonth() &&
           d.getFullYear() === ahora.getFullYear()
         );
       })
-      .reduce((s, e) => s + (e.costoTotalEgreso ?? 0), 0);
+      .reduce((s, e) => s + (e.costo_total_iva ?? 0), 0);
   }
 
   function promedio6Meses(trabajador: Trabajador) {
-    const creado = new Date(trabajador.creadoEn);
+    const creado = new Date(trabajador.created_at);
     const ahora = new Date();
-    const meses = Math.min(
-      6,
-      (ahora.getFullYear() - creado.getFullYear()) * 12 +
-        (ahora.getMonth() - creado.getMonth()) +
-        1
-    );
 
-    const gastos = egresos.filter((e) => {
-      const d = new Date(e.fecha);
+    const mesesDesdeCreacion =
+      (ahora.getFullYear() - creado.getFullYear()) * 12 +
+      (ahora.getMonth() - creado.getMonth()) +
+      1;
+
+    const mesesConsiderados = Math.min(6, Math.max(1, mesesDesdeCreacion));
+
+    const gastos = entregasResumen.filter((e) => {
+      const d = new Date(e.fecha_entrega);
       const diffMeses =
         (ahora.getFullYear() - d.getFullYear()) * 12 +
         (ahora.getMonth() - d.getMonth());
-      return (
-        e.trabajador.rut === trabajador.rut && diffMeses < meses
-      );
+      return e.trabajador_id === trabajador.id && diffMeses < mesesConsiderados;
     });
 
-    const total = gastos.reduce(
-      (s, e) => s + (e.costoTotalEgreso ?? 0),
-      0
-    );
+    const total = gastos.reduce((s, e) => s + (e.costo_total_iva ?? 0), 0);
 
-    return meses > 0 ? total / meses : 0;
+    return total / mesesConsiderados;
   }
 
-  const trabajadoresFiltrados = trabajadores.filter((t) => {
-    if (filtroEstado === "activos") return t.activo === true;
-    if (filtroEstado === "inactivos") return t.activo === false;
-    return true;
-  });
+  function ordenar(key: "nombre" | "rut" | "estado") {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const trabajadoresFiltrados = useMemo(() => {
+    const base = trabajadores.filter((t) => {
+      if (filtroEstado === "activos") return t.activo === true;
+      if (filtroEstado === "inactivos") return t.activo === false;
+      return true;
+    });
+
+    if (!sortKey) return base;
+
+    return [...base].sort((a, b) => {
+      let av: any;
+      let bv: any;
+
+      if (sortKey === "nombre") {
+        av = a.nombre.toLowerCase();
+        bv = b.nombre.toLowerCase();
+      } else if (sortKey === "rut") {
+        av = a.rut;
+        bv = b.rut;
+      } else {
+        av = a.activo ? 1 : 0;
+        bv = b.activo ? 1 : 0;
+      }
+
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [trabajadores, filtroEstado, sortKey, sortDir]);
 
   return (
     <div className="space-y-6">
@@ -333,15 +458,21 @@ export default function TrabajadoresPage() {
               📥 Carga masiva (límite alcanzado)
             </div>
           ) : (
-            <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50">
-              📥 Carga masiva
-              <input
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={(e) => handleCargaMasiva(e)}
-              />
-            </label>
+            <div>
+              <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50">
+                📥 Carga masiva
+                <input
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => handleCargaMasiva(e)}
+                />
+              </label>
+              <div className="text-xs text-zinc-500 mt-1">
+                La carga masiva soporta archivos CSV en UTF-8. Los nombres de centro y trabajadores serán normalizados (sin acentos). Si tienes problemas con acentos, guarda tu archivo como UTF-8.<br />
+                El formato esperado es: Nombre;RUT;Email;Centro de trabajo;Talla;Número de calzado
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -381,7 +512,7 @@ export default function TrabajadoresPage() {
         >
           <option value="">Selecciona un centro de trabajo</option>
           {centros.map((c) => (
-            <option key={c.id} value={c.nombre}>
+            <option key={c.id} value={c.id}>
               {c.nombre}
             </option>
           ))}
@@ -412,15 +543,21 @@ export default function TrabajadoresPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-zinc-50">
             <tr>
-              <th className="p-2 text-left w-[180px]">Nombre</th>
-              <th className="p-2 text-left w-[140px]">RUT</th>
+              <th className="p-2 text-left w-[180px] cursor-pointer" onClick={() => ordenar("nombre")}>
+                Nombre {sortKey === "nombre" && (sortDir === "asc" ? "▲" : "▼")}
+              </th>
+              <th className="p-2 text-left w-[140px] cursor-pointer" onClick={() => ordenar("rut")}>
+                RUT {sortKey === "rut" && (sortDir === "asc" ? "▲" : "▼")}
+              </th>
               <th className="p-2 text-left w-[220px]">Email</th>
               <th className="p-2 text-left w-[200px]">Centro de trabajo</th>
               <th className="p-2 text-left w-[100px]">Talla</th>
               <th className="p-2 text-left w-[120px]">Calzado</th>
               <th className="p-2 text-right w-[160px]">Gasto mes ($)</th>
               <th className="p-2 text-right w-[180px]">Prom. 6 meses ($)</th>
-              <th className="p-2 text-left w-[120px]">Estado</th>
+              <th className="p-2 text-left w-[120px] cursor-pointer" onClick={() => ordenar("estado")}>
+                Estado {sortKey === "estado" && (sortDir === "asc" ? "▲" : "▼")}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -439,24 +576,24 @@ export default function TrabajadoresPage() {
                         e.target.value
                       )
                     }
-                    disabled={!t.activo}
+                    disabled={editingId !== t.id}
                   />
                 </td>
                 <td className="p-2">
                   <select
                     className="input"
-                    value={t.centro}
+                    value={t.centro_id}
                     onChange={(e) =>
                       actualizarCampo(
                         t.id,
-                        "centro",
+                        "centro_id",
                         e.target.value
                       )
                     }
-                    disabled={!t.activo}
+                    disabled={editingId !== t.id}
                   >
                     {centros.map((c) => (
-                      <option key={c.id} value={c.nombre}>
+                      <option key={c.id} value={c.id}>
                         {c.nombre}
                       </option>
                     ))}
@@ -473,7 +610,7 @@ export default function TrabajadoresPage() {
                         e.target.value
                       )
                     }
-                    disabled={!t.activo}
+                    disabled={editingId !== t.id}
                   />
                 </td>
                 <td className="p-2">
@@ -487,25 +624,52 @@ export default function TrabajadoresPage() {
                         e.target.value
                       )
                     }
-                    disabled={!t.activo}
+                    disabled={editingId !== t.id}
                   />
                 </td>
                 <td className="p-2 text-right">
-                  {gastoMes(t.rut).toLocaleString("es-CL")}
+                  {gastoMes(t.id).toLocaleString("es-CL")}
                 </td>
                 <td className="p-2 text-right">
                   {promedio6Meses(t).toLocaleString("es-CL")}
                 </td>
                 <td className="p-2">
-                  {t.activo ? (
-                    <button
-                      className="text-red-600 hover:underline"
-                      onClick={() => darDeBajaTrabajador(t.id)}
-                    >
-                      Dar de baja
-                    </button>
+                  {editingId === t.id ? (
+                    <div className="flex gap-2">
+                      <button
+                        className="text-sky-600 hover:underline"
+                        onClick={() => setEditingId(null)}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        className="text-zinc-500 hover:underline"
+                        onClick={() => setEditingId(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
                   ) : (
-                    <span className="text-gray-500">Inactivo</span>
+                    <div className="flex items-center gap-3">
+                      <span className={t.activo ? "text-green-600" : "text-zinc-400"}>
+                        {t.activo ? "Vigente" : "Inactivo"}
+                      </span>
+                      <button
+                        className="text-zinc-500 hover:text-black"
+                        onClick={() => setEditingId(t.id)}
+                        title="Editar / acciones"
+                      >
+                        ⋯
+                      </button>
+                      {t.activo && (
+                        <button
+                          className="text-red-600 hover:underline"
+                          onClick={() => darDeBajaTrabajador(t.id)}
+                        >
+                          Dar de baja
+                        </button>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 type CentroTrabajo = {
   id: string;
@@ -10,19 +10,14 @@ type CentroTrabajo = {
   activo: boolean;
 };
 
-type Trabajador = {
-  id: string;
-  centroTrabajo: string;
-};
-
 export default function CentrosPage() {
   const [centros, setCentros] = useState<CentroTrabajo[]>([]);
-  const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
   const [nuevoCentro, setNuevoCentro] = useState("");
   const [error, setError] = useState("");
+  const [fetchError, setFetchError] = useState("");
 
   const [ordenCampo, setOrdenCampo] = useState<
-    "nombre" | "estado" | "trabajadores" | null
+    "nombre" | "estado" | null
   >(null);
   const [ordenDireccion, setOrdenDireccion] = useState<
     "asc" | "desc"
@@ -30,24 +25,88 @@ export default function CentrosPage() {
 
   const [verSoloActivos, setVerSoloActivos] = useState(true);
 
-  // Cargar centros y trabajadores
+  const [empresaId, setEmpresaId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    const storedCentros =
-      JSON.parse(localStorage.getItem("centrosTrabajo") || "[]");
+    let channel: any;
 
-    const storedTrabajadores =
-      JSON.parse(localStorage.getItem("trabajadores") || "[]");
+    const fetchData = async () => {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabaseBrowser.auth.getUser();
 
-    setCentros(storedCentros);
-    setTrabajadores(storedTrabajadores);
+      if (userError || !user) {
+        setLoading(false);
+        return;
+      }
+
+      const { data: usuario } = await supabaseBrowser
+        .from("usuarios")
+        .select("empresa_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (!usuario?.empresa_id) {
+        setLoading(false);
+        return;
+      }
+
+      setEmpresaId(usuario.empresa_id);
+
+      const { data: centrosDB, error: fetchError } = await supabaseBrowser
+        .from("centros_trabajo")
+        .select("id, nombre, activo")
+        .eq("empresa_id", usuario.empresa_id)
+        .order("nombre");
+
+      if (fetchError) {
+        setFetchError(fetchError.message);
+        setLoading(false);
+        return;
+      }
+
+      setCentros(centrosDB || []);
+      setLoading(false);
+
+      channel = supabaseBrowser
+        .channel("centros_trabajo_changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "centros_trabajo",
+            filter: `empresa_id=eq.${usuario.empresa_id}`,
+          },
+          (payload) => {
+            setCentros((prev) => {
+              if (payload.eventType === "INSERT") {
+                return [...prev, payload.new as CentroTrabajo];
+              }
+              if (payload.eventType === "UPDATE") {
+                return prev.map((c) =>
+                  c.id === payload.new.id ? (payload.new as CentroTrabajo) : c
+                );
+              }
+              return prev;
+            });
+          }
+        )
+        .subscribe();
+    };
+
+    fetchData();
+
+    return () => {
+      if (channel) {
+        supabaseBrowser.removeChannel(channel);
+      }
+    };
   }, []);
 
-  const guardarCentros = (data: CentroTrabajo[]) => {
-    setCentros(data);
-    localStorage.setItem("centrosTrabajo", JSON.stringify(data));
-  };
-
-  const agregarCentro = () => {
+  const agregarCentro = async () => {
     setError("");
 
     if (!nuevoCentro.trim()) {
@@ -65,30 +124,30 @@ export default function CentrosPage() {
       return;
     }
 
-    const nuevo: CentroTrabajo = {
-      id: crypto.randomUUID(),
-      nombre: nuevoCentro.trim(),
-      activo: true,
-    };
+    if (!empresaId) return;
 
-    guardarCentros([...centros, nuevo]);
+    const { data, error } = await supabaseBrowser
+      .from("centros_trabajo")
+      .insert({
+        empresa_id: empresaId,
+        nombre: nuevoCentro.trim(),
+        activo: true,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setError(error.message);
+      return;
+    }
+
+    setCentros((prev) => [...prev, data]);
     setNuevoCentro("");
   };
 
-  const darDeBaja = (id: string) => {
+  const darDeBaja = async (id: string) => {
     const centro = centros.find((c) => c.id === id);
     if (!centro || !centro.activo) return;
-
-    const trabajadoresAsignados = trabajadores.filter(
-      (t) => t.centroTrabajo === centro.nombre
-    );
-
-    if (trabajadoresAsignados.length > 0) {
-      alert(
-        "Este centro tiene trabajadores asignados. Reasígnalos antes de darlo de baja."
-      );
-      return;
-    }
 
     const confirmar = confirm(
       "¿Estás seguro de dar de baja este centro de trabajo?\n\n• El centro quedará inactivo\n• No podrá volver a activarse\n• No se perderá información histórica\n\nEsta acción no se puede deshacer."
@@ -96,20 +155,18 @@ export default function CentrosPage() {
 
     if (!confirmar) return;
 
-    const actualizados = centros.map((c) =>
-      c.id === id ? { ...c, activo: false } : c
-    );
+    await supabaseBrowser
+      .from("centros_trabajo")
+      .update({ activo: false })
+      .eq("id", id);
 
-    guardarCentros(actualizados);
+    setCentros((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, activo: false } : c))
+    );
   };
 
-  const contarTrabajadores = (nombreCentro: string) =>
-    trabajadores.filter(
-      (t) => t.centroTrabajo === nombreCentro
-    ).length;
-
   const ordenar = (
-    campo: "nombre" | "estado" | "trabajadores"
+    campo: "nombre" | "estado"
   ) => {
     if (ordenCampo === campo) {
       setOrdenDireccion(
@@ -141,11 +198,6 @@ export default function CentrosPage() {
       bVal = b.activo ? 1 : 0;
     }
 
-    if (ordenCampo === "trabajadores") {
-      aVal = contarTrabajadores(a.nombre);
-      bVal = contarTrabajadores(b.nombre);
-    }
-
     if (typeof aVal === "number" && typeof bVal === "number") {
       return ordenDireccion === "asc"
         ? aVal - bVal
@@ -157,6 +209,14 @@ export default function CentrosPage() {
       : String(bVal).localeCompare(String(aVal));
   });
 
+  if (loading) {
+    return <div className="text-zinc-500">Cargando centros…</div>;
+  }
+
+  if (fetchError) {
+    return <div className="text-red-600">Error: {fetchError}</div>;
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -164,9 +224,9 @@ export default function CentrosPage() {
           Centros de trabajo
         </h1>
         <p className="text-sm text-zinc-500">
-          Administra los centros activos de tu empresa.
-          Los centros con trabajadores asignados no pueden
-          darse de baja.
+          Administra los centros de trabajo de tu empresa.<br />
+          Los centros se gestionan centralizadamente y son utilizados en onboarding, trabajadores y egresos.<br />
+          Un centro puede darse de baja solo si no tiene entregas asociadas. Si fue creado por error y ya tiene movimientos, solicita ayuda en soporte@eppcontrol.cl.
         </p>
 
         <div className="mt-3 flex items-center gap-3 text-sm">
@@ -243,20 +303,10 @@ export default function CentrosPage() {
                 {ordenCampo === "estado" &&
                   (ordenDireccion === "asc" ? "▲" : "▼")}
               </th>
-              <th
-                onClick={() => ordenar("trabajadores")}
-                className="p-3 cursor-pointer"
-              >
-                Trabajadores asignados{" "}
-                {ordenCampo === "trabajadores" &&
-                  (ordenDireccion === "asc" ? "▲" : "▼")}
-              </th>
             </tr>
           </thead>
           <tbody>
             {centrosOrdenados.map((c) => {
-              const total = contarTrabajadores(c.nombre);
-
               return (
                 <tr
                   key={c.id}
@@ -301,20 +351,6 @@ export default function CentrosPage() {
                       </p>
                     )}
                   </td>
-                  <td className="p-3">
-                    {total > 0 ? (
-                      <Link
-                        href={`/dashboard/trabajadores?centro=${encodeURIComponent(
-                          c.nombre
-                        )}`}
-                        className="text-sky-600 hover:underline"
-                      >
-                        {total}
-                      </Link>
-                    ) : (
-                      0
-                    )}
-                  </td>
                 </tr>
               );
             })}
@@ -322,7 +358,7 @@ export default function CentrosPage() {
             {centros.length === 0 && (
               <tr>
                 <td
-                  colSpan={3}
+                  colSpan={2}
                   className="p-4 text-center text-zinc-500"
                 >
                   Aún no hay centros de trabajo creados.

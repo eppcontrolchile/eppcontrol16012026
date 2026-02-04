@@ -13,14 +13,13 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
+
+    "baseUrl": ".",                       // 🔑 CLAVE
     "paths": {
-      "@/*": ["./*"]
-    }
+      "@/*": ["app/*"]                    // 🔑 SIN ./
+    },
+
+    "plugins": [{ "name": "next" }]
   },
   "include": [
     "next-env.d.ts",
@@ -30,5 +29,9 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "legacy",
+    "app/_legacy"
+  ]
 }

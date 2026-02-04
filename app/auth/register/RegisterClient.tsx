@@ -5,17 +5,13 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function RegisterClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const planFromUrl = searchParams.get("plan"); // standard | advanced | null
+
 
   const [loading, setLoading] = useState(false);
 
@@ -74,7 +70,9 @@ export default function RegisterClient() {
       !form.firstName ||
       !form.lastName ||
       !form.email ||
-      !form.plan
+      !form.plan ||
+      !form.password ||
+      !form.confirmPassword
     ) {
       alert("Completa todos los campos obligatorios");
       return;
@@ -89,6 +87,7 @@ export default function RegisterClient() {
       formData.append("companyRut", form.companyRut);
       formData.append("companySize", form.companySize);
       formData.append("plan", form.plan);
+      formData.append("plan_source", "register");
       formData.append("firstName", form.firstName);
       formData.append("lastName", form.lastName);
       formData.append("email", form.email);
@@ -103,27 +102,29 @@ export default function RegisterClient() {
         body: formData,
       });
 
-      const result = await res.json();
+      const result = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         alert(result.error || "Error al crear cuenta");
         return;
       }
 
-      const { error: signInError } =
-        await supabase.auth.signInWithPassword({
-          email: form.email,
-          password: form.password,
-        });
+      // Autologin (single shared client). Avoid creating multiple GoTrueClient instances.
+      const { data, error } = await supabaseBrowser.auth.signInWithPassword({
+        email: form.email,
+        password: form.password,
+      });
 
-      if (signInError) {
-        alert(
-          "Cuenta creada, pero no se pudo iniciar sesión automáticamente."
-        );
+      if (error || !data.session) {
+        console.warn("AUTOLOGIN FAILED:", error);
+        // Mostrar feedback útil para debug sin exponer detalles sensibles
+        alert("Cuenta creada, pero no se pudo iniciar sesión automáticamente. Inicia sesión manualmente.");
+        router.replace("/auth/login");
         return;
       }
 
-      router.push("/onboarding/configuracion");
+      // Sesión válida → continuar onboarding
+      router.replace("/onboarding/configuracion");
     } catch {
       alert("Error inesperado");
     } finally {

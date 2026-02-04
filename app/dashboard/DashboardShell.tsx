@@ -1,35 +1,51 @@
+//app/dashboard/DashboardShell.tsx
+
 "use client";
 
-import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabase/client";
+import type React from "react";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 type Props = {
-  companyName: string;
-  companyRut: string;
-  plan: "standard" | "advanced";
-  rol: "admin" | "supervisor" | "bodega" | "solo_lectura";
+  /**
+   * These values are OPTIONAL because Next.js `layout.tsx` cannot receive custom props.
+   * When not provided, we fall back to safe defaults.
+   */
+  companyName?: string;
+  companyRut?: string;
+  plan?: "standard" | "advanced";
+  rol?: "admin" | "supervisor" | "bodega" | "solo_lectura";
   companyLogoUrl?: string | null;
   children: React.ReactNode;
 };
 
 export default function DashboardShell({
-  companyName,
-  companyRut,
-  plan,
-  rol,
+  companyName = "Empresa",
+  companyRut = "",
+  plan = "standard",
+  rol = "solo_lectura",
   companyLogoUrl,
   children,
 }: Props) {
   const router = useRouter();
 
+  const defaultLogo = "/logoepp.png";
+
+  const initialLogoSrc = useMemo(() => {
+    const url = (companyLogoUrl ?? "").trim();
+    return url.length > 0 ? url : defaultLogo;
+  }, [companyLogoUrl]);
+
+  const [logoSrc, setLogoSrc] = useState<string>(initialLogoSrc);
+
+  useEffect(() => {
+    setLogoSrc(initialLogoSrc);
+  }, [initialLogoSrc]);
+
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await supabaseBrowser.auth.signOut();
     router.push("/auth/login");
   };
 
@@ -39,31 +55,19 @@ export default function DashboardShell({
       <aside className="w-60 bg-white border-r px-4 py-6">
         <div className="flex items-center gap-3 mb-8">
           <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden">
-            {companyLogoUrl ? (
-              <img
-                src={companyLogoUrl}
-                alt="Logo empresa"
-                className="h-full w-full object-contain"
-              />
-            ) : (
-              <Image
-                src="/logoepp.png"
-                alt="EPP Control"
-                width={160}
-                height={100}
-                className="h-full w-full object-contain"
-                priority
-              />
-            )}
+            <img
+              src={logoSrc}
+              alt={companyName ? `Logo ${companyName}` : "Logo empresa"}
+              className="h-full w-full object-contain"
+              onError={() => setLogoSrc(defaultLogo)}
+            />
           </div>
           <div className="leading-tight">
             <div className="font-semibold text-zinc-800 text-sm">
-              {companyName}
+              {companyName || "Empresa"}
             </div>
-            {companyRut && (
-              <div className="text-xs text-zinc-500">
-                RUT: {companyRut}
-              </div>
+            {!!companyRut && (
+              <div className="text-xs text-zinc-500">RUT: {companyRut}</div>
             )}
           </div>
         </div>

@@ -1,4 +1,5 @@
 // app/dashboard/layout.tsx
+import type React from "react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -27,7 +28,6 @@ export default async function DashboardLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
-  console.log("DASHBOARD USER:", user);
 
   if (!user) {
     redirect("/auth/login");
@@ -40,7 +40,6 @@ export default async function DashboardLayout({
     .eq("auth_user_id", user.id)
     .single();
 
-  console.log("USUARIO DB:", usuario, usuarioError);
 
   if (usuarioError || !usuario) {
     redirect("/auth/login");
@@ -53,19 +52,28 @@ export default async function DashboardLayout({
     .eq("id", usuario.empresa_id)
     .single();
 
-  console.log("EMPRESA DB:", empresa, empresaError);
 
   if (empresaError || !empresa) {
     redirect("/auth/login");
   }
+
+  // Normalizar valores a los unions esperados por DashboardShell
+  const plan = empresa.plan_tipo === "advanced" ? "advanced" : "standard";
+  const rol =
+    usuario.rol === "admin" ||
+    usuario.rol === "supervisor" ||
+    usuario.rol === "bodega" ||
+    usuario.rol === "solo_lectura"
+      ? usuario.rol
+      : "solo_lectura";
 
   // 4️⃣ Render con contexto completo
   return (
     <DashboardShell
       companyName={empresa.nombre}
       companyRut={empresa.rut}
-      plan={empresa.plan_tipo}
-      rol={usuario.rol}
+      plan={plan}
+      rol={rol}
       companyLogoUrl={empresa.logo_url}
     >
       {children}

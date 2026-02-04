@@ -4,7 +4,7 @@
 import * as XLSX from "xlsx";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { addLoteFIFO, LoteFIFO } from "@/app/utils/fifo";
+
 
 type IngresoItem = {
 categoria: string;
@@ -54,35 +54,24 @@ const ITEMS_POR_HOJA = 20;
 const [pagina, setPagina] = useState(1);
 
 useEffect(() => {
-  const lotes: LoteFIFO[] = JSON.parse(
-    localStorage.getItem("fifoLotes") || "[]"
-  );
-
-  const rows: IngresoHistorialRow[] = lotes.map((l) => {
-    const cantidadInicial =
-      typeof l.cantidadInicial === "number"
-        ? l.cantidadInicial
-        : Number(l.cantidadInicial ?? l.cantidadDisponible ?? 0);
-
-    return {
-      fecha: l.fechaIngreso,
-      categoria: l.categoria,
-      nombre: l.nombreEpp,
-      talla: l.talla,
-      cantidad: cantidadInicial,
-      valorUnitario: l.costoUnitarioIVA,
-      total: cantidadInicial * l.costoUnitarioIVA,
-    };
-  });
-
-  // orden descendente por fecha
-  rows.sort(
-    (a, b) =>
-      new Date(b.fecha).getTime() -
-      new Date(a.fecha).getTime()
-  );
-
-  setHistorial(rows);
+  // Cargar historial desde API
+  const fetchHistorial = async () => {
+    try {
+      const resp = await fetch("/api/stock/ingresos");
+      if (!resp.ok) throw new Error("Error al cargar historial");
+      const data: IngresoHistorialRow[] = await resp.json();
+      // Ordenar por fecha descendente
+      data.sort(
+        (a, b) =>
+          new Date(b.fecha).getTime() -
+          new Date(a.fecha).getTime()
+      );
+      setHistorial(data);
+    } catch (err) {
+      setHistorial([]);
+    }
+  };
+  fetchHistorial();
 }, []);
 
 const totalPaginas = Math.ceil(
@@ -150,7 +139,7 @@ const removeItem = (index: number) => {
   setItems(items.filter((_, i) => i !== index));
 };
 
-const handleSubmit = (e: React.FormEvent) => {
+const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
 
   for (const item of items) {
@@ -161,20 +150,18 @@ const handleSubmit = (e: React.FormEvent) => {
   }
 
   try {
-    items.forEach((item) => {
+    // Validaciones y conversión de items
+    const itemsToSend = items.map((item) => {
       if (!item.valorUnitario || !item.tipoIVA) {
         throw new Error(
           "Debes ingresar monto unitario y tipo de IVA"
         );
       }
-
       let costoIVA = item.valorUnitario;
-
       if (item.tipoIVA === "MAS_IVA") {
         costoIVA = Math.round(item.valorUnitario * 1.19);
       }
-
-      addLoteFIFO({
+      return {
         categoria:
           item.categoria === "Otro"
             ? item.categoriaOtro || "Otro"
@@ -186,9 +173,18 @@ const handleSubmit = (e: React.FormEvent) => {
             : item.tallaNumero,
         cantidad: item.cantidad,
         costoUnitarioIVA: costoIVA,
-      });
+      };
     });
 
+    const resp = await fetch("/api/stock/ingreso", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: itemsToSend }),
+    });
+    if (!resp.ok) {
+      const error = await resp.text();
+      throw new Error(error || "Error al registrar ingreso");
+    }
     alert("Ingreso registrado correctamente");
     router.push("/dashboard/stock");
   } catch (err: any) {
@@ -214,7 +210,7 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
 
   const reader = new FileReader();
 
-  reader.onload = (evt) => {
+  reader.onload = async (evt) => {
     const data = evt.target?.result;
     if (!data) return;
 
@@ -232,6 +228,7 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     }
 
     try {
+      const ingresosMasivos: any[] = [];
       rows.forEach((row, index) => {
         // Usar getCell para tolerar variantes de encabezado
         const categoriaRaw = getCell(row, ["Categoría", "Categoria"]);
@@ -297,7 +294,7 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
           );
         }
 
-        addLoteFIFO({
+        ingresosMasivos.push({
           categoria: categoriaRaw,
           nombreEpp: nombreEpp,
           talla:
@@ -309,6 +306,17 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
           costoUnitarioIVA: valorIVAIncluido,
         });
       });
+
+      // Enviar a API
+      const resp = await fetch("/api/stock/ingreso-masivo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: ingresosMasivos }),
+      });
+      if (!resp.ok) {
+        const error = await resp.text();
+        throw new Error(error || "Error en carga masiva");
+      }
 
       setMensajeCarga(
         "✔️ Ingreso masivo realizado correctamente. El stock fue actualizado."

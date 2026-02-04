@@ -10,7 +10,13 @@ type StockCriticalItem = {
   cantidad: number;
 };
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResend() {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY no está definida");
+  }
+  return new Resend(apiKey);
+};
 
 export async function POST(req: Request) {
   try {
@@ -30,6 +36,8 @@ export async function POST(req: Request) {
           `• ${item.categoria} – ${item.nombre} (${item.talla ?? "No aplica"}) → Cantidad: ${item.cantidad}`
       )
       .join("\n");
+
+    const resend = getResend();
 
     await resend.emails.send({
       from: process.env.ALERT_EMAIL_FROM || "onboarding@resend.dev",
