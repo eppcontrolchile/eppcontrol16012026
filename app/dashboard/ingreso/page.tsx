@@ -166,13 +166,13 @@ const handleSubmit = async (e: React.FormEvent) => {
           item.categoria === "Otro"
             ? item.categoriaOtro || "Otro"
             : item.categoria,
-        nombreEpp: item.epp,
+        nombre_epp: item.epp,
         talla:
           item.tallaNumero.toLowerCase() === "no aplica"
             ? null
             : item.tallaNumero,
         cantidad: item.cantidad,
-        costoUnitarioIVA: costoIVA,
+        costo_unitario_iva: costoIVA,
       };
     });
 
@@ -296,14 +296,14 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
 
         ingresosMasivos.push({
           categoria: categoriaRaw,
-          nombreEpp: nombreEpp,
+          nombre_epp: nombreEpp,
           talla:
             String(tallaNumero).toLowerCase() ===
             "no aplica"
               ? null
               : String(tallaNumero),
           cantidad,
-          costoUnitarioIVA: valorIVAIncluido,
+          costo_unitario_iva: valorIVAIncluido,
         });
       });
 

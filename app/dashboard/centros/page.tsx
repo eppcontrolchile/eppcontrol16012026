@@ -8,6 +8,7 @@ type CentroTrabajo = {
   id: string;
   nombre: string;
   activo: boolean;
+  trabajadoresActivos: number;
 };
 
 export default function CentrosPage() {
@@ -17,7 +18,7 @@ export default function CentrosPage() {
   const [fetchError, setFetchError] = useState("");
 
   const [ordenCampo, setOrdenCampo] = useState<
-    "nombre" | "estado" | null
+    "nombre" | "estado" | "trabajadores" | null
   >(null);
   const [ordenDireccion, setOrdenDireccion] = useState<
     "asc" | "desc"
@@ -67,7 +68,33 @@ export default function CentrosPage() {
         return;
       }
 
-      setCentros(centrosDB || []);
+      // Contar trabajadores activos por centro
+      const { data: trabajadoresDB, error: trabajadoresError } = await supabaseBrowser()
+        .from("trabajadores")
+        .select("centro_id")
+        .eq("empresa_id", usuario.empresa_id)
+        .eq("activo", true);
+
+      if (trabajadoresError) {
+        setFetchError(trabajadoresError.message);
+        setLoading(false);
+        return;
+      }
+
+      const counts = (trabajadoresDB || []).reduce<Record<string, number>>((acc, t: any) => {
+        const key = t?.centro_id ?? "__sin_centro__";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+
+      const centrosConConteo: CentroTrabajo[] = (centrosDB || []).map((c: any) => ({
+        id: c.id,
+        nombre: c.nombre,
+        activo: c.activo,
+        trabajadoresActivos: counts[c.id] || 0,
+      }));
+
+      setCentros(centrosConConteo);
       setLoading(false);
 
       channel = supabaseBrowser()
@@ -83,11 +110,23 @@ export default function CentrosPage() {
           (payload) => {
             setCentros((prev) => {
               if (payload.eventType === "INSERT") {
-                return [...prev, payload.new as CentroTrabajo];
+                const n = payload.new as any;
+                return [
+                  ...prev,
+                  {
+                    id: n.id,
+                    nombre: n.nombre,
+                    activo: n.activo,
+                    trabajadoresActivos: 0,
+                  },
+                ];
               }
               if (payload.eventType === "UPDATE") {
+                const n = payload.new as any;
                 return prev.map((c) =>
-                  c.id === payload.new.id ? (payload.new as CentroTrabajo) : c
+                  c.id === n.id
+                    ? { ...c, nombre: n.nombre, activo: n.activo }
+                    : c
                 );
               }
               return prev;
@@ -166,7 +205,7 @@ export default function CentrosPage() {
   };
 
   const ordenar = (
-    campo: "nombre" | "estado"
+    campo: "nombre" | "estado" | "trabajadores"
   ) => {
     if (ordenCampo === campo) {
       setOrdenDireccion(
@@ -196,6 +235,11 @@ export default function CentrosPage() {
     if (ordenCampo === "estado") {
       aVal = a.activo ? 1 : 0;
       bVal = b.activo ? 1 : 0;
+    }
+
+    if (ordenCampo === "trabajadores") {
+      aVal = a.trabajadoresActivos;
+      bVal = b.trabajadoresActivos;
     }
 
     if (typeof aVal === "number" && typeof bVal === "number") {
@@ -303,6 +347,14 @@ export default function CentrosPage() {
                 {ordenCampo === "estado" &&
                   (ordenDireccion === "asc" ? "▲" : "▼")}
               </th>
+              <th
+                onClick={() => ordenar("trabajadores")}
+                className="p-3 cursor-pointer text-right"
+              >
+                Trabajadores activos{" "}
+                {ordenCampo === "trabajadores" &&
+                  (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -351,6 +403,9 @@ export default function CentrosPage() {
                       </p>
                     )}
                   </td>
+                  <td className="p-3 text-right tabular-nums">
+                    {c.trabajadoresActivos}
+                  </td>
                 </tr>
               );
             })}
@@ -358,7 +413,7 @@ export default function CentrosPage() {
             {centros.length === 0 && (
               <tr>
                 <td
-                  colSpan={2}
+                  colSpan={3}
                   className="p-4 text-center text-zinc-500"
                 >
                   Aún no hay centros de trabajo creados.

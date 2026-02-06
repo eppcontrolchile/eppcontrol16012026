@@ -64,12 +64,12 @@ export async function POST(req: Request) {
 
   const rows = items.map((it: any) => {
     const cantidad = Number(it.cantidad);
-    const costo = Number(it.costo_unitario_iva);
+    const costo = Number(it.costo_unitario_iva ?? it.costoUnitarioIVA);
 
     return {
       empresa_id: usuario.empresa_id,
       categoria: String(it.categoria || "").trim(),
-      nombre_epp: String(it.nombre_epp || "").trim(),
+      nombre_epp: String((it.nombre_epp ?? it.nombreEpp) || "").trim(),
       talla: it.talla ? String(it.talla).trim() : null,
       cantidad_inicial: cantidad,
       cantidad_disponible: cantidad,

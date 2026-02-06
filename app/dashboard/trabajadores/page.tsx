@@ -13,7 +13,7 @@ type Trabajador = {
   email?: string;
   centro_id: string;
   talla?: string;
-  calzado?: string;
+  numero_calzado?: string;
   created_at: string;
   activo: boolean;
 };
@@ -49,6 +49,31 @@ function validarRut(rut: string) {
     resto === 11 ? "0" : resto === 10 ? "K" : resto.toString();
 
   return dv === dvEsperado;
+}
+
+function normalizeRut(input: string) {
+  const raw = String(input ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/\./g, "")
+    .replace(/[^0-9K-]/g, "");
+
+  if (!raw) return "";
+
+  if (raw.includes("-")) {
+    const [body, dv] = raw.split("-");
+    const b = (body || "").replace(/\D/g, "");
+    const d = (dv || "").slice(0, 1);
+    if (!b || !d) return "";
+    return `${b}-${d}`;
+  }
+
+  // sin guión → último char es DV
+  const dv = raw.slice(-1);
+  const body = raw.slice(0, -1).replace(/\D/g, "");
+  if (!body || !dv) return "";
+  return `${body}-${dv}`;
 }
 
 
@@ -151,7 +176,7 @@ export default function TrabajadoresPage() {
       alert("Debes completar nombre, RUT y centro de trabajo.");
       return;
     }
-    const rutNormalizado = nuevo.rut.replace(/\./g, "").toUpperCase();
+    const rutNormalizado = normalizeRut(nuevo.rut);
     if (!validarRut(rutNormalizado)) {
       alert("El RUT ingresado no es válido. Usa formato XXXXXXXX-X.");
       return;
@@ -274,11 +299,11 @@ export default function TrabajadoresPage() {
 
         const nombre = cols[0]?.trim();
         const rutRaw = cols[1]?.trim() || "";
-        const rut = rutRaw.replace(/\./g, "").toUpperCase();
+        const rut = normalizeRut(rutRaw);
         const email = cols[2]?.trim() || null;
         const centroRaw = cols[3]?.trim();
         const talla = cols[4]?.trim() || null;
-        const calzado = cols[5]?.trim() || null;
+        const numero_calzado = cols[5]?.trim() || null;
 
         if (!nombre || !rut || !centroRaw) return;
 
@@ -309,7 +334,7 @@ export default function TrabajadoresPage() {
           email,
           centro_id: centroMatch.id,
           talla,
-          calzado,
+          numero_calzado,
           activo: true,
           empresa_id: empresaId,
         });
@@ -629,11 +654,11 @@ export default function TrabajadoresPage() {
                 <td className="p-2">
                   <input
                     className="input"
-                    value={t.calzado ?? ""}
+                    value={t.numero_calzado ?? ""}
                     onChange={(e) =>
                       actualizarCampo(
                         t.id,
-                        "calzado",
+                        "numero_calzado",
                         e.target.value
                       )
                     }
