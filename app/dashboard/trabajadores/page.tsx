@@ -67,6 +67,7 @@ export default function TrabajadoresPage() {
   const [entregasResumen, setEntregasResumen] = useState<EntregaResumen[]>([]);
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"nombre" | "rut" | "estado" | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -138,6 +139,13 @@ export default function TrabajadoresPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const onDown = () => setMenuOpenId(null);
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [menuOpenId]);
+
   async function agregarTrabajador() {
     if (!nuevo.nombre || !nuevo.rut || !nuevo.centro) {
       alert("Debes completar nombre, RUT y centro de trabajo.");
@@ -195,23 +203,27 @@ export default function TrabajadoresPage() {
     setTrabajadores(actualizado);
   }
 
-  async function darDeBajaTrabajador(id: string) {
-    if (!window.confirm("¿Estás seguro de dar de baja a este trabajador? Esta acción no se puede deshacer.")) {
-      return;
+  async function setTrabajadorActivo(id: string, activo: boolean) {
+    if (!activo) {
+      const ok = window.confirm(
+        "¿Dar de baja a este trabajador? Puedes volver a activarlo después."
+      );
+      if (!ok) return;
     }
-    // Update in Supabase
+
     const { error } = await supabaseBrowser()
       .from("trabajadores")
-      .update({ activo: false })
+      .update({ activo })
       .eq("id", id);
+
     if (error) {
-      alert("Error al dar de baja: " + error.message);
+      alert("Error al actualizar estado: " + error.message);
       return;
     }
-    const actualizado = trabajadores.map((t) =>
-      t.id === id ? { ...t, activo: false } : t
+
+    setTrabajadores((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, activo } : t))
     );
-    setTrabajadores(actualizado);
   }
 
   async function handleCargaMasiva(
@@ -414,7 +426,7 @@ export default function TrabajadoresPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold">Trabajadores</h1>
           <div className="flex-shrink-0">
@@ -429,37 +441,35 @@ export default function TrabajadoresPage() {
             </select>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              const csv =
-                "Nombre;RUT;Email;Centro de trabajo;Talla;Número de calzado\n";
-              const blob = new Blob([csv], {
-                type: "text/csv;charset=utf-8;",
-              });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.setAttribute(
-                "download",
-                "plantilla_trabajadores.csv"
-              );
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }}
-            className="mr-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50"
-          >
-            📄 Descargar plantilla
-          </button>
-          {planUsage.alcanzado ? (
-            <div className="rounded-lg border px-3 py-1.5 text-sm text-zinc-400 cursor-not-allowed">
-              📥 Carga masiva (límite alcanzado)
-            </div>
-          ) : (
-            <div>
-              <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50">
+        <div className="flex flex-col items-start gap-2 md:items-end">
+          <div className="flex flex-wrap items-center gap-2 justify-start md:justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                const csv =
+                  "Nombre;RUT;Email;Centro de trabajo;Talla;Número de calzado\n";
+                const blob = new Blob([csv], {
+                  type: "text/csv;charset=utf-8;",
+                });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.setAttribute("download", "plantilla_trabajadores.csv");
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50 whitespace-nowrap"
+            >
+              📄 Descargar plantilla
+            </button>
+
+            {planUsage.alcanzado ? (
+              <div className="rounded-lg border px-3 py-1.5 text-sm text-zinc-400 cursor-not-allowed whitespace-nowrap">
+                📥 Carga masiva (límite alcanzado)
+              </div>
+            ) : (
+              <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50 whitespace-nowrap">
                 📥 Carga masiva
                 <input
                   type="file"
@@ -468,12 +478,15 @@ export default function TrabajadoresPage() {
                   onChange={(e) => handleCargaMasiva(e)}
                 />
               </label>
-              <div className="text-xs text-zinc-500 mt-1">
-                La carga masiva soporta archivos CSV en UTF-8. Los nombres de centro y trabajadores serán normalizados (sin acentos). Si tienes problemas con acentos, guarda tu archivo como UTF-8.<br />
-                El formato esperado es: Nombre;RUT;Email;Centro de trabajo;Talla;Número de calzado
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          <div className="text-xs text-zinc-500 max-w-xl">
+            La carga masiva soporta archivos CSV en UTF-8. Los nombres de centro y trabajadores serán
+            normalizados (sin acentos). Si tienes problemas con acentos, guarda tu archivo como UTF-8.
+            <br />
+            El formato esperado es: Nombre;RUT;Email;Centro de trabajo;Talla;Número de calzado
+          </div>
         </div>
       </div>
 
@@ -650,25 +663,63 @@ export default function TrabajadoresPage() {
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-between gap-3">
                       <span className={t.activo ? "text-green-600" : "text-zinc-400"}>
                         {t.activo ? "Vigente" : "Inactivo"}
                       </span>
-                      <button
-                        className="text-zinc-500 hover:text-black"
-                        onClick={() => setEditingId(t.id)}
-                        title="Editar / acciones"
-                      >
-                        ⋯
-                      </button>
-                      {t.activo && (
+
+                      <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
                         <button
-                          className="text-red-600 hover:underline"
-                          onClick={() => darDeBajaTrabajador(t.id)}
+                          type="button"
+                          className="px-2 py-1 rounded hover:bg-zinc-100 text-zinc-700"
+                          onClick={() =>
+                            setMenuOpenId((prev) => (prev === t.id ? null : t.id))
+                          }
+                          title="Acciones"
+                          aria-label="Acciones"
                         >
-                          Dar de baja
+                          ⋯
                         </button>
-                      )}
+
+                        {menuOpenId === t.id ? (
+                          <div className="absolute right-0 z-10 mt-2 w-40 rounded-lg border bg-white shadow">
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
+                              onClick={() => {
+                                setEditingId(t.id);
+                                setMenuOpenId(null);
+                              }}
+                            >
+                              Editar
+                            </button>
+
+                            {t.activo ? (
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-zinc-50"
+                                onClick={async () => {
+                                  setMenuOpenId(null);
+                                  await setTrabajadorActivo(t.id, false);
+                                }}
+                              >
+                                Dar de baja
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm text-green-700 hover:bg-zinc-50"
+                                onClick={async () => {
+                                  setMenuOpenId(null);
+                                  await setTrabajadorActivo(t.id, true);
+                                }}
+                              >
+                                Activar
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 </td>
