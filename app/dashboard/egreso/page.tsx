@@ -116,6 +116,7 @@ export default function EgresoPage() {
 
         // Solo lo disponible
         setStock(mapped.filter((s) => s.stock > 0));
+        setError("");
         setLoading(false);
       } catch (e: any) {
         setError(e?.message || "Error cargando datos");
@@ -156,6 +157,10 @@ export default function EgresoPage() {
     );
     return row?.stock ?? 0;
   };
+
+  const trabajadorSeleccionado = useMemo(() => {
+    return trabajadores.find((t) => t.id === trabajadorId) ?? null;
+  }, [trabajadores, trabajadorId]);
 
   const updateItem = (index: number, patch: Partial<EgresoItemUI>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
@@ -233,6 +238,16 @@ export default function EgresoPage() {
       return;
     }
 
+    if (!trabajadorSeleccionado) {
+      setError("Selecciona un trabajador válido");
+      return;
+    }
+
+    if (!trabajadorSeleccionado.centro_id) {
+      setError("El trabajador seleccionado no tiene centro de trabajo asignado");
+      return;
+    }
+
     if (!firmado) {
       setError("La entrega debe ser firmada");
       return;
@@ -266,7 +281,7 @@ export default function EgresoPage() {
 
       const { data: usuario, error: usuarioError } = await supabaseBrowser()
         .from("usuarios")
-        .select("id, empresa_id, centro_id")
+        .select("id, empresa_id")
         .eq("auth_user_id", authData.user.id)
         .maybeSingle();
 
@@ -279,7 +294,7 @@ export default function EgresoPage() {
         empresa_id: usuario.empresa_id,
         usuario_id: usuario.id,
         trabajador_id: trabajadorId,
-        centro_id: usuario.centro_id,
+        centro_id: trabajadorSeleccionado.centro_id,
         firma_url: canvasRef.current?.toDataURL() || null,
         items: items.map((i) => ({
           categoria: i.categoria,
