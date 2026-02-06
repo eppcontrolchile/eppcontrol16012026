@@ -150,6 +150,7 @@ export async function POST(req: Request) {
         p_centro_id: centro_id,
         p_firma_url: firma_url,
         p_items: items,
+        p_idempotency_key: idempotencyKey,
       }
     );
 
