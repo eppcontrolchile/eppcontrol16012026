@@ -180,11 +180,12 @@ export default function CentrosPage() {
       return;
     }
 
-    setCentros((prev) => [...prev, data]);
+    setCentros((prev) => [...prev, { ...data, trabajadoresActivos: 0 }]);
     setNuevoCentro("");
   };
 
   const darDeBaja = async (id: string) => {
+    setError("");
     const centro = centros.find((c) => c.id === id);
     if (!centro || !centro.activo) return;
 
@@ -194,10 +195,15 @@ export default function CentrosPage() {
 
     if (!confirmar) return;
 
-    await supabaseBrowser()
+    const { error: updateError } = await supabaseBrowser()
       .from("centros_trabajo")
       .update({ activo: false })
       .eq("id", id);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
 
     setCentros((prev) =>
       prev.map((c) => (c.id === id ? { ...c, activo: false } : c))
