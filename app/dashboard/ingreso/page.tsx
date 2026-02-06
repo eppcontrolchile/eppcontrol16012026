@@ -57,15 +57,41 @@ useEffect(() => {
   // Cargar historial desde API
   const fetchHistorial = async () => {
     try {
-      const resp = await fetch("/api/stock/ingresos");
+      const resp = await fetch("/api/stock/ingresos?limit=200&offset=0", {
+        cache: "no-store",
+      });
       if (!resp.ok) throw new Error("Error al cargar historial");
-      const data: IngresoHistorialRow[] = await resp.json();
-      // Ordenar por fecha descendente
-      data.sort(
-        (a, b) =>
-          new Date(b.fecha).getTime() -
-          new Date(a.fecha).getTime()
-      );
+
+      const raw = await resp.json().catch(() => null);
+      const arr: any[] = Array.isArray(raw) ? raw : raw?.rows ?? [];
+
+      // API devuelve filas de `lotes_epp`; adaptamos a la shape del UI
+      const data: IngresoHistorialRow[] = arr.map((r: any) => {
+        const fecha = String(r?.fecha_ingreso ?? r?.fecha ?? "");
+        const categoria = String(r?.categoria ?? "");
+        const nombre = String(r?.nombre_epp ?? r?.nombre ?? "");
+        const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla);
+
+        const cantidad = Number(r?.cantidad_inicial ?? r?.cantidad ?? 0);
+        const valorUnitario = Number(r?.costo_unitario_iva ?? r?.valorUnitario ?? 0);
+        const total = Number.isFinite(cantidad) && Number.isFinite(valorUnitario)
+          ? cantidad * valorUnitario
+          : 0;
+
+        return {
+          fecha,
+          categoria,
+          nombre,
+          talla,
+          cantidad: Number.isFinite(cantidad) ? cantidad : 0,
+          valorUnitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
+          total,
+        };
+      });
+
+      // Ordenar por fecha descendente (fallback: created_at no viene en UI)
+      data.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setPagina(1);
       setHistorial(data);
     } catch (err) {
       setHistorial([]);
