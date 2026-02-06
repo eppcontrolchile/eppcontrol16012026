@@ -1,12 +1,15 @@
 //app/api/stock/[id]/critico/route.ts
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id: rawId } = await params;
+  // id may come URL-encoded from the frontend
+  const id = decodeURIComponent(rawId);
   const body = await req.json().catch(() => null);
   const stock_critico = Number(body?.stock_critico);
 
@@ -19,9 +22,9 @@ export async function PATCH(
 
   // El id viene como:
   // empresa_id|categoria|nombre|talla
-  const [empresa_id, categoria, nombre_epp, tallaRaw] = params.id.split("|");
+  const [empresa_id, categoria, nombre_epp, tallaRaw] = id.split("|");
 
-  const talla = tallaRaw || null;
+  const talla = tallaRaw ?? "";
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,13 +33,18 @@ export async function PATCH(
 
   const { error } = await supabase
     .from("stock_criticos")
-    .upsert({
-      empresa_id,
-      categoria,
-      nombre_epp,
-      talla,
-      stock_critico,
-    });
+    .upsert(
+      {
+        empresa_id,
+        categoria,
+        nombre_epp,
+        talla,
+        stock_critico,
+      },
+      {
+        onConflict: "empresa_id,categoria,nombre_epp,talla",
+      }
+    );
 
   if (error) {
     return NextResponse.json(
