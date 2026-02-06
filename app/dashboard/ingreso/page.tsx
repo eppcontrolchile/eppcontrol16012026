@@ -17,13 +17,20 @@ tipoIVA?: "IVA_INCLUIDO" | "MAS_IVA";
 };
 
 type IngresoHistorialRow = {
-fecha: string;
-categoria: string;
-nombre: string;
-talla: string | null;
-cantidad: number;
-valorUnitario: number;
-total: number;
+  id: string;
+  fecha: string;
+  categoria: string;
+  nombre: string;
+  talla: string | null;
+  cantidad: number;
+  valorUnitario: number;
+  total: number;
+
+  // control/auditoría
+  anulado: boolean;
+  anulado_motivo: string | null;
+  cantidad_inicial: number;
+  cantidad_disponible: number;
 };
 
 export default function IngresoPage() {
@@ -35,7 +42,7 @@ const [items, setItems] = useState<IngresoItem[]>([
   {
     categoria: "",
     epp: "",
-    tallaNumero: "",
+    tallaNumero: "No aplica",
     cantidad: 1,
     tipoIVA: "IVA_INCLUIDO",
   },
@@ -79,6 +86,7 @@ useEffect(() => {
           : 0;
 
         return {
+          id: String(r?.id ?? ""),
           fecha,
           categoria,
           nombre,
@@ -86,6 +94,10 @@ useEffect(() => {
           cantidad: Number.isFinite(cantidad) ? cantidad : 0,
           valorUnitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
           total,
+          anulado: Boolean(r?.anulado ?? false),
+          anulado_motivo: r?.anulado_motivo ?? null,
+          cantidad_inicial: Number(r?.cantidad_inicial ?? 0),
+          cantidad_disponible: Number(r?.cantidad_disponible ?? 0),
         };
       });
 
@@ -154,7 +166,7 @@ const addItem = () => {
     {
       categoria: "",
       epp: "",
-      tallaNumero: "",
+      tallaNumero: "No aplica",
       cantidad: 1,
       tipoIVA: "IVA_INCLUIDO",
     },
@@ -168,12 +180,45 @@ const removeItem = (index: number) => {
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
 
-  for (const item of items) {
-    if (!item.categoria || !item.epp || !item.tallaNumero || item.cantidad <= 0) {
-      alert("Completa correctamente todos los EPP del ingreso");
-      return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const fila = i + 1;
+
+      if (!item.categoria) {
+        alert(`Fila ${fila}: falta Categoría`);
+        return;
+      }
+
+      if (item.categoria === "Otro" && !(item.categoriaOtro || "").trim()) {
+        alert(`Fila ${fila}: falta especificar la Categoría (Otro)`);
+        return;
+      }
+
+      if (!item.epp || !item.epp.trim()) {
+        alert(`Fila ${fila}: falta Nombre del EPP`);
+        return;
+      }
+
+      if (!item.tallaNumero || !item.tallaNumero.trim()) {
+        alert(`Fila ${fila}: falta Talla / Número (puedes escribir "No aplica")`);
+        return;
+      }
+
+      if (!Number.isFinite(item.cantidad) || item.cantidad <= 0) {
+        alert(`Fila ${fila}: Cantidad inválida`);
+        return;
+      }
+
+      if (!Number.isFinite(item.valorUnitario) || (item.valorUnitario ?? 0) <= 0) {
+        alert(`Fila ${fila}: falta Monto unitario`);
+        return;
+      }
+
+      if (!item.tipoIVA) {
+        alert(`Fila ${fila}: falta Tipo IVA`);
+        return;
+      }
     }
-  }
 
   try {
     // Validaciones y conversión de items
@@ -369,6 +414,138 @@ const handleOrden = (
   }
 };
 
+const esEditable = (row: IngresoHistorialRow) => {
+  return !row.anulado && row.cantidad_disponible === row.cantidad_inicial;
+};
+
+const refrescarHistorial = async () => {
+  try {
+    const resp = await fetch("/api/stock/ingresos?limit=200&offset=0", {
+      cache: "no-store",
+    });
+    if (!resp.ok) throw new Error("Error al cargar historial");
+
+    const raw = await resp.json().catch(() => null);
+    const arr: any[] = Array.isArray(raw) ? raw : raw?.rows ?? [];
+
+    const data: IngresoHistorialRow[] = arr.map((r: any) => {
+      const fecha = String(r?.fecha_ingreso ?? r?.fecha ?? "");
+      const categoria = String(r?.categoria ?? "");
+      const nombre = String(r?.nombre_epp ?? r?.nombre ?? "");
+      const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla);
+
+      const cantidad = Number(r?.cantidad_inicial ?? r?.cantidad ?? 0);
+      const valorUnitario = Number(r?.costo_unitario_iva ?? r?.valorUnitario ?? 0);
+      const total = Number.isFinite(cantidad) && Number.isFinite(valorUnitario)
+        ? cantidad * valorUnitario
+        : 0;
+
+      return {
+        id: String(r?.id ?? ""),
+        fecha,
+        categoria,
+        nombre,
+        talla,
+        cantidad: Number.isFinite(cantidad) ? cantidad : 0,
+        valorUnitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
+        total,
+        anulado: Boolean(r?.anulado ?? false),
+        anulado_motivo: r?.anulado_motivo ?? null,
+        cantidad_inicial: Number(r?.cantidad_inicial ?? 0),
+        cantidad_disponible: Number(r?.cantidad_disponible ?? 0),
+      };
+    });
+
+    data.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+    setPagina(1);
+    setHistorial(data);
+  } catch {
+    setHistorial([]);
+  }
+};
+
+const anularIngreso = async (row: IngresoHistorialRow) => {
+  if (!esEditable(row)) {
+    alert("No se puede anular: este ingreso ya fue consumido (tiene egresos o consumo). ");
+    return;
+  }
+
+  const motivo = prompt("Motivo de anulación (obligatorio):");
+  if (!motivo || !motivo.trim()) {
+    alert("Debes indicar un motivo.");
+    return;
+  }
+
+  const confirmar = confirm(
+    `¿Anular este ingreso?\n\n${row.categoria} - ${row.nombre} (${row.talla ?? "No aplica"})\nCantidad: ${row.cantidad}\n\nEsta acción dejará el registro para auditoría, pero no contará en stock.`
+  );
+  if (!confirmar) return;
+
+  const resp = await fetch(`/api/stock/ingresos/${row.id}/anular`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ motivo }),
+  });
+
+  const result = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(result?.error || "Error al anular ingreso");
+    return;
+  }
+
+  await refrescarHistorial();
+};
+
+const modificarIngreso = async (row: IngresoHistorialRow) => {
+  if (!esEditable(row)) {
+    alert("No se puede modificar: este ingreso ya fue consumido (tiene egresos o consumo). ");
+    return;
+  }
+
+  const nuevaFecha = prompt("Fecha de ingreso (YYYY-MM-DD):", row.fecha);
+  if (!nuevaFecha || !/^\d{4}-\d{2}-\d{2}$/.test(nuevaFecha.trim())) {
+    alert("Fecha inválida. Usa formato YYYY-MM-DD.");
+    return;
+  }
+
+  const nuevoCosto = prompt("Costo unitario IVA incluido:", String(row.valorUnitario));
+  const costoNum = Number(nuevoCosto);
+  if (!Number.isFinite(costoNum) || costoNum < 0) {
+    alert("Costo inválido.");
+    return;
+  }
+
+  const nuevaCantidad = prompt("Cantidad (solo permitido si el lote no tiene consumo):", String(row.cantidad));
+  const cantidadNum = Number(nuevaCantidad);
+  if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
+    alert("Cantidad inválida.");
+    return;
+  }
+
+  const confirmar = confirm(
+    `¿Guardar cambios?\n\nFecha: ${row.fecha} → ${nuevaFecha}\nCosto: ${row.valorUnitario} → ${costoNum}\nCantidad: ${row.cantidad} → ${cantidadNum}`
+  );
+  if (!confirmar) return;
+
+  const resp = await fetch(`/api/stock/ingresos/${row.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fecha_ingreso: nuevaFecha.trim(),
+      costo_unitario_iva: costoNum,
+      cantidad_inicial: cantidadNum,
+    }),
+  });
+
+  const result = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(result?.error || "Error al modificar ingreso");
+    return;
+  }
+
+  await refrescarHistorial();
+};
+
 return (
   <div className="max-w-2xl space-y-6">
     <h1 className="text-2xl font-semibold">Ingreso de EPP</h1>
@@ -420,7 +597,7 @@ return (
               value={item.tallaNumero}
               onChange={(e) => updateItem(index, "tallaNumero", e.target.value)}
               className="input"
-              placeholder="Talla / Número (o No aplica)"
+              placeholder="Talla / Número (obligatorio, puedes usar No aplica)"
             />
 
             <input
@@ -579,13 +756,15 @@ return (
             >
               Total {ordenCampo === "total" && (ordenDireccion === "asc" ? "▲" : "▼")}
             </th>
+            <th className="border border-slate-300 p-2 text-left">Estado</th>
+            <th className="border border-slate-300 p-2 text-left">Acciones</th>
           </tr>
         </thead>
         <tbody>
           {historial.length === 0 && (
             <tr>
               <td
-                colSpan={7}
+                colSpan={9}
                 className="border border-slate-300 p-4 text-center text-zinc-500"
               >
                 No hay ingresos registrados
@@ -595,7 +774,7 @@ return (
 
           {historialPaginado.map((row, idx) => (
             <tr
-              key={idx}
+              key={row.id || idx}
               className="border border-slate-300 hover:bg-zinc-50"
             >
               <td className="p-2 border border-slate-300">
@@ -618,6 +797,42 @@ return (
               </td>
               <td className="p-2 border border-slate-300 text-right">
                 {row.total.toLocaleString("es-CL")}
+              </td>
+              <td className="p-2 border border-slate-300">
+                {row.anulado ? (
+                  <span className="text-zinc-500">Anulado</span>
+                ) : (
+                  <span className="text-green-700">Activo</span>
+                )}
+                {row.anulado && row.anulado_motivo ? (
+                  <div className="mt-1 text-xs text-zinc-500">
+                    Motivo: {row.anulado_motivo}
+                  </div>
+                ) : null}
+              </td>
+
+              <td className="p-2 border border-slate-300">
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => modificarIngreso(row)}
+                    disabled={!esEditable(row)}
+                    className="rounded border px-2 py-1 text-left disabled:opacity-40"
+                    title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Modificar"}
+                  >
+                    ✏️ Modificar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => anularIngreso(row)}
+                    disabled={!esEditable(row)}
+                    className="rounded border px-2 py-1 text-left text-red-700 disabled:opacity-40"
+                    title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Anular"}
+                  >
+                    🧾 Anular
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

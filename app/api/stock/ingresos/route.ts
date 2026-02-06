@@ -31,8 +31,14 @@ export async function GET(req: NextRequest) {
   const limitRaw = searchParams.get("limit");
   const offsetRaw = searchParams.get("offset");
 
-  const limit = Math.min(Math.max(Number(limitRaw ?? 200), 1), 500);
-  const offset = Math.max(Number(offsetRaw ?? 0), 0);
+  const limitParsed = Number(limitRaw);
+  const offsetParsed = Number(offsetRaw);
+
+  const limit = Number.isFinite(limitParsed)
+    ? Math.min(Math.max(limitParsed, 1), 500)
+    : 200;
+
+  const offset = Number.isFinite(offsetParsed) ? Math.max(offsetParsed, 0) : 0;
 
   const supabaseAuth = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -85,7 +91,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from("lotes_epp")
     .select(
-      "id, fecha_ingreso, categoria, nombre_epp, talla, cantidad_inicial, cantidad_disponible, costo_unitario_iva, created_at"
+      "id, empresa_id, usuario_id, fecha_ingreso, categoria, nombre_epp, talla, cantidad_inicial, cantidad_disponible, costo_unitario_iva, anulado, anulado_at, anulado_por, anulado_motivo, created_at"
     )
     .eq("empresa_id", usuario.empresa_id)
     .order("fecha_ingreso", { ascending: false })
