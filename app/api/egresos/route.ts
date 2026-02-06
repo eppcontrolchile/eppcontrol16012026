@@ -8,6 +8,9 @@ import { generarPdfEntrega } from "@/utils/entrega-pdf";
 import { guardarPdfEnStorage } from "@/utils/guardar-pdf-storage";
 import { enviarCorreosEgreso } from "@/utils/enviar-mail-egreso";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
  * POST /api/egresos
  * Flujo:
@@ -20,6 +23,13 @@ export async function POST(req: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json(
+      { error: "Faltan variables de entorno de Supabase (URL o SERVICE_ROLE_KEY)" },
+      { status: 500 }
+    );
+  }
 
   try {
     const body = await req.json();
@@ -78,66 +88,6 @@ export async function POST(req: Request) {
       }
     }
 
-    const { data: existente, error: idemError } = await supabase
-      .from("egresos_idempotencia")
-      .select("entrega_id")
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
-
-    if (idemError) {
-      throw idemError;
-    }
-
-    if (existente?.entrega_id) {
-      return NextResponse.json(
-        {
-          ok: true,
-          entrega_id: existente.entrega_id,
-          idempotent: true,
-        },
-        { status: 200 }
-      );
-    }
-
-    const { error: insertIdemError } = await supabase
-      .from("egresos_idempotencia")
-      .insert({
-        idempotency_key: idempotencyKey,
-        empresa_id,
-        usuario_id,
-      });
-
-    if (insertIdemError) {
-      // 23505 = unique_violation (reintento concurrente con misma idempotency key)
-      if (insertIdemError.code === "23505") {
-        const { data: existente2, error: idemError2 } = await supabase
-          .from("egresos_idempotencia")
-          .select("entrega_id")
-          .eq("idempotency_key", idempotencyKey)
-          .maybeSingle();
-
-        if (idemError2) throw idemError2;
-
-        if (existente2?.entrega_id) {
-          return NextResponse.json(
-            { ok: true, entrega_id: existente2.entrega_id, idempotent: true },
-            { status: 200 }
-          );
-        }
-
-        // Otro request sigue procesando la misma llave
-        return NextResponse.json(
-          {
-            error:
-              "Solicitud duplicada en proceso. Intenta nuevamente en unos segundos.",
-          },
-          { status: 409 }
-        );
-      }
-
-      throw insertIdemError;
-    }
-
     // ─────────────────────────────────────────────
     // 2️⃣ Ejecutar FIFO productivo en PostgreSQL
     // ─────────────────────────────────────────────
@@ -187,15 +137,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const { error: updateIdemError } = await supabase
-      .from("egresos_idempotencia")
-      .update({ entrega_id: entregaId })
-      .eq("idempotency_key", idempotencyKey);
-
-    if (updateIdemError) {
-      throw updateIdemError;
-    }
-
     // ─────────────────────────────────────────────
     // 2️⃣.1 Generar PDF automático post-RPC
     // ─────────────────────────────────────────────
@@ -231,20 +172,33 @@ export async function POST(req: Request) {
       );
     }
 
+    // Normalizar relaciones: a veces llegan como objeto, a veces como array (según typing/joins)
+    const empresaRel: any = Array.isArray((entregaData as any).empresas)
+      ? (entregaData as any).empresas[0]
+      : (entregaData as any).empresas;
+
+    const trabajadorRel: any = Array.isArray((entregaData as any).trabajadores)
+      ? (entregaData as any).trabajadores[0]
+      : (entregaData as any).trabajadores;
+
+    const centroRel: any = Array.isArray((entregaData as any).centros_trabajo)
+      ? (entregaData as any).centros_trabajo[0]
+      : (entregaData as any).centros_trabajo;
+
     // Armar estructura PDF
     const pdfBuffer = await generarPdfEntrega({
       empresa: {
-        nombre: entregaData.empresas[0]?.nombre,
-        rut: entregaData.empresas[0]?.rut,
-        logo_url: entregaData.empresas[0]?.logo_url,
+        nombre: empresaRel?.nombre,
+        rut: empresaRel?.rut,
+        logo_url: empresaRel?.logo_url,
       },
       egreso: {
         id: entregaData.id,
         fecha: entregaData.fecha_entrega,
         trabajador: {
-          nombre: entregaData.trabajadores[0]?.nombre,
-          rut: entregaData.trabajadores[0]?.rut,
-          centro: entregaData.centros_trabajo[0]?.nombre,
+          nombre: trabajadorRel?.nombre,
+          rut: trabajadorRel?.rut,
+          centro: centroRel?.nombre,
         },
         items: entregaData.entrega_items.map((i: any) => ({
           categoria: i.categoria,
@@ -287,12 +241,12 @@ export async function POST(req: Request) {
       await enviarCorreosEgreso({
         pdf_url: path,
         empresa: {
-          nombre: entregaData.empresas[0]?.nombre,
+          nombre: empresaRel?.nombre,
         },
         trabajador: {
-          nombre: entregaData.trabajadores[0]?.nombre,
-          rut: entregaData.trabajadores[0]?.rut,
-          email: entregaData.trabajadores[0]?.email ?? null,
+          nombre: trabajadorRel?.nombre,
+          rut: trabajadorRel?.rut,
+          email: trabajadorRel?.email ?? null,
         },
         emailAdmin: usuarioMail?.email,
       });
@@ -304,13 +258,15 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // 3️⃣ Respuesta
     // ─────────────────────────────────────────────
-    return NextResponse.json(
+    const res = NextResponse.json(
       {
         ok: true,
         ...rpcResult,
       },
       { status: 201 }
     );
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   } catch (err: any) {
     console.error("EGRESOS API ERROR:", err);
     return NextResponse.json(
