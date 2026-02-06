@@ -170,7 +170,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const entregaId = data.entrega_id;
+    // Supabase RPC puede devolver object, array (1 row), o wrapper según configuración
+    const rpcResult: any = Array.isArray(data) ? data[0] : data;
+
+    const entregaId: string | undefined =
+      rpcResult?.entrega_id ??
+      rpcResult?.entregaId ??
+      rpcResult?.id ??
+      rpcResult?.entrega?.id;
+
+    if (!entregaId) {
+      console.error("RPC FIFO ERROR: entrega_id missing", { data });
+      return NextResponse.json(
+        { error: "El servidor no devolvió entrega_id desde registrar_egreso_fifo" },
+        { status: 500 }
+      );
+    }
 
     const { error: updateIdemError } = await supabase
       .from("egresos_idempotencia")
@@ -209,7 +224,11 @@ export async function POST(req: Request) {
       .single();
 
     if (entregaError || !entregaData) {
-      throw new Error("No se pudo obtener la entrega para generar el PDF");
+      console.error("PDF ERROR: no entregaData", { entregaId, entregaError });
+      throw new Error(
+        `No se pudo obtener la entrega para generar el PDF (entrega_id=${entregaId})` +
+          (entregaError?.message ? `: ${entregaError.message}` : "")
+      );
     }
 
     // Armar estructura PDF
@@ -285,10 +304,13 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // 3️⃣ Respuesta
     // ─────────────────────────────────────────────
-    return NextResponse.json({
-      ok: true,
-      ...data,
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        ok: true,
+        ...rpcResult,
+      },
+      { status: 201 }
+    );
   } catch (err: any) {
     console.error("EGRESOS API ERROR:", err);
     return NextResponse.json(
