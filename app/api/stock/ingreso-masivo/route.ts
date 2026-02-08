@@ -66,11 +66,18 @@ export async function POST(req: Request) {
     const cantidad = Number(it.cantidad);
     const costo = Number(it.costo_unitario_iva ?? it.costoUnitarioIVA);
 
+    const tallaRaw = it?.talla ? String(it.talla).trim() : "";
+    const talla =
+      tallaRaw &&
+      !["no aplica", "noaplica", "n/a", "na", "-"].includes(tallaRaw.toLowerCase())
+        ? tallaRaw
+        : null;
+
     return {
       empresa_id: usuario.empresa_id,
       categoria: String(it.categoria || "").trim(),
       nombre_epp: String((it.nombre_epp ?? it.nombreEpp) || "").trim(),
-      talla: it.talla ? String(it.talla).trim() : null,
+      talla,
       cantidad_inicial: cantidad,
       cantidad_disponible: cantidad,
       costo_unitario_iva: costo,
@@ -81,7 +88,7 @@ export async function POST(req: Request) {
   // Validación mínima
   for (const r of rows) {
     const cantidadOk = Number.isFinite(r.cantidad_inicial) && r.cantidad_inicial > 0;
-    const costoOk = Number.isFinite(r.costo_unitario_iva) && r.costo_unitario_iva >= 0;
+      const costoOk = Number.isFinite(r.costo_unitario_iva) && r.costo_unitario_iva > 0;
 
     if (!r.categoria || !r.nombre_epp || !cantidadOk || !costoOk) {
       return NextResponse.json(

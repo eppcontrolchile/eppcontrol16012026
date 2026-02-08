@@ -111,7 +111,16 @@ export async function POST(req: NextRequest) {
     rows = items.map((it) => {
       const categoria = String(it?.categoria ?? "").trim();
       const nombre_epp = String(it?.nombre_epp ?? it?.nombreEpp ?? "").trim();
-      const talla = it?.talla ? String(it.talla).trim() : null;
+
+      // Normaliza talla: variantes de "No aplica" se guardan como NULL
+      const tallaRaw = it?.talla ? String(it.talla).trim() : "";
+      const talla =
+        tallaRaw &&
+        !["no aplica", "noaplica", "n/a", "na", "-"].includes(
+          tallaRaw.toLowerCase()
+        )
+          ? tallaRaw
+          : null;
 
       const cantidadNum = Number(it?.cantidad);
       const costoNum = Number(it?.costo_unitario_iva ?? it?.costoUnitarioIVA);
@@ -126,7 +135,7 @@ export async function POST(req: NextRequest) {
       if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
         throw new Error("Cantidad inválida");
       }
-      if (!Number.isFinite(costoNum) || costoNum < 0) {
+      if (!Number.isFinite(costoNum) || costoNum <= 0) {
         throw new Error("Costo inválido");
       }
 
