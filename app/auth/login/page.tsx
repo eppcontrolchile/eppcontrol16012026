@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -23,6 +24,11 @@ export default function LoginPage() {
       const params = new URLSearchParams(window.location.search);
       const rawNext = params.get("next") || "/dashboard";
       const next = rawNext.startsWith("/") ? rawNext : "/dashboard";
+
+      // Persistencia de sesión (se aplica en lib/supabase/client.ts):
+      // - rememberMe = true  -> localStorage (permanece días)
+      // - rememberMe = false -> sessionStorage (se pierde al cerrar el navegador)
+      window.localStorage.setItem("epp_remember", rememberMe ? "1" : "0");
 
       const { data, error } = await supabaseBrowser().auth.signInWithPassword({
         email: email.trim().toLowerCase(),
@@ -71,6 +77,16 @@ export default function LoginPage() {
           className="input"
           required
         />
+
+        <label className="flex items-center gap-2 text-sm text-zinc-700">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+          />
+          Mantener sesión iniciada en este equipo
+        </label>
 
         {error && <p className="text-red-600 text-sm">{error}</p>}
 

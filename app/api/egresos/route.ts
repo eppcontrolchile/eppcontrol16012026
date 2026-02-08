@@ -8,6 +8,26 @@ import { generarPdfEntrega } from "@/utils/entrega-pdf";
 import { guardarPdfEnStorage } from "@/utils/guardar-pdf-storage";
 import { enviarCorreosEgreso } from "@/utils/enviar-mail-egreso";
 
+async function urlToDataUrl(input?: string | null): Promise<string | null> {
+  if (!input) return null;
+
+  // Already a data URL
+  if (input.startsWith("data:")) return input;
+
+  // Only allow http(s) fetches. Never pass local paths to the PDF generator.
+  if (!/^https?:\/\//i.test(input)) return null;
+
+  const res = await fetch(input);
+  if (!res.ok) {
+    throw new Error(`No se pudo descargar recurso para PDF (${res.status})`);
+  }
+
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const ab = await res.arrayBuffer();
+  const b64 = Buffer.from(ab).toString("base64");
+  return `data:${contentType};base64,${b64}`;
+}
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -184,12 +204,18 @@ export async function POST(req: Request) {
       ? (entregaData as any).centros_trabajo[0]
       : (entregaData as any).centros_trabajo;
 
+    // Normalizar imágenes para el PDF:
+    // - jsPDF no debe recibir rutas locales (provocan error "allowFsRead")
+    // - Convertimos URLs http(s) a data URL base64
+    const logoDataUrl = await urlToDataUrl(empresaRel?.logo_url ?? null);
+    const firmaDataUrl = await urlToDataUrl(entregaData.firma_url ?? null);
+
     // Armar estructura PDF
     const pdfBuffer = await generarPdfEntrega({
       empresa: {
         nombre: empresaRel?.nombre,
         rut: empresaRel?.rut,
-        logo_url: empresaRel?.logo_url,
+        logo_url: logoDataUrl ?? undefined,
       },
       egreso: {
         id: entregaData.id,
@@ -205,7 +231,8 @@ export async function POST(req: Request) {
           tallaNumero: i.talla,
           cantidad: i.cantidad,
         })),
-        firmaBase64: entregaData.firma_url,
+        // Si no hay firma o no es http(s)/data URL, se deja null para que el PDF no intente leer FS
+        firmaBase64: firmaDataUrl,
       },
     });
 

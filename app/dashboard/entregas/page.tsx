@@ -18,6 +18,23 @@ type Entrega = {
   centro: string;
 };
 
+function formatFechaCL(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-CL");
+}
+
+function formatCLP(value?: number | null) {
+  if (value === null || value === undefined) return "—";
+  return `$${value.toLocaleString("es-CL")}`;
+}
+
+function firstRel<T>(rel: any): T | null {
+  if (!rel) return null;
+  return Array.isArray(rel) ? (rel[0] ?? null) : rel;
+}
+
 export default function EntregasPage() {
   const [entregas, setEntregas] = useState<Entrega[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,10 +76,10 @@ export default function EntregasPage() {
           costo_total_iva: e.costo_total_iva,
           pdf_url: e.pdf_url ?? null,
           trabajador: {
-            nombre: e.trabajadores?.[0]?.nombre ?? "",
-            rut: e.trabajadores?.[0]?.rut ?? "",
+            nombre: (firstRel<{ nombre?: string; rut?: string }>(e.trabajadores)?.nombre ?? "—").trim() || "—",
+            rut: (firstRel<{ nombre?: string; rut?: string }>(e.trabajadores)?.rut ?? "—").trim() || "—",
           },
-          centro: e.centros_trabajo?.[0]?.nombre ?? "",
+          centro: (firstRel<{ nombre?: string }>(e.centros_trabajo)?.nombre ?? "—").trim() || "—",
         }));
 
         setEntregas(entregasFormateadas);
@@ -108,7 +125,60 @@ export default function EntregasPage() {
         <p className="text-sm text-zinc-500">No hay entregas registradas.</p>
       )}
 
-      <div className="overflow-x-auto rounded border">
+      {/* Mobile: cards */}
+      <div className="space-y-3 md:hidden">
+        {entregas.map((e) => (
+          <div key={e.id} className="rounded-lg border bg-white p-3">
+            <div className="text-sm text-zinc-600">{formatFechaCL(e.fecha)}</div>
+
+            <div className="mt-2">
+              <div className="text-xs text-zinc-500">Trabajador</div>
+              <div className="font-medium text-zinc-900">
+                {e.trabajador.nombre} <span className="text-zinc-500">·</span> {e.trabajador.rut}
+              </div>
+            </div>
+
+            <div className="mt-2">
+              <div className="text-xs text-zinc-500">Centro</div>
+              <div className="font-medium text-zinc-900">{e.centro}</div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-zinc-500">Unidades</div>
+                <div className="font-medium text-zinc-900">{e.total_unidades}</div>
+              </div>
+              <div>
+                <div className="text-xs text-zinc-500">Total IVA</div>
+                <div className="font-medium text-zinc-900">{formatCLP(e.costo_total_iva)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              {e.pdf_url ? (
+                <div className="flex gap-3">
+                  <a
+                    href={e.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sky-600 underline"
+                  >
+                    Ver PDF
+                  </a>
+                  <a href={e.pdf_url} download className="text-zinc-700 underline">
+                    Descargar
+                  </a>
+                </div>
+              ) : (
+                <span className="text-zinc-400">No disponible</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop: table */}
+      <div className="hidden overflow-x-auto rounded border md:block">
         <table className="w-full text-sm">
           <thead className="bg-zinc-100">
             <tr>
@@ -123,17 +193,13 @@ export default function EntregasPage() {
           <tbody>
             {entregas.map((e) => (
               <tr key={e.id} className="border-t">
-                <td className="p-2">
-                  {new Date(e.fecha).toLocaleDateString("es-CL")}
-                </td>
+                <td className="whitespace-nowrap p-2">{formatFechaCL(e.fecha)}</td>
                 <td className="p-2">
                   {e.trabajador.nombre} · {e.trabajador.rut}
                 </td>
                 <td className="p-2">{e.centro}</td>
-                <td className="p-2 text-right">{e.total_unidades}</td>
-                <td className="p-2 text-right">
-                  ${e.costo_total_iva?.toLocaleString("es-CL")}
-                </td>
+                <td className="whitespace-nowrap p-2 text-right">{e.total_unidades}</td>
+                <td className="whitespace-nowrap p-2 text-right">{formatCLP(e.costo_total_iva)}</td>
                 <td className="p-2">
                   {e.pdf_url ? (
                     <div className="flex gap-2">
@@ -145,11 +211,7 @@ export default function EntregasPage() {
                       >
                         Ver
                       </a>
-                      <a
-                        href={e.pdf_url}
-                        download
-                        className="text-zinc-700 underline"
-                      >
+                      <a href={e.pdf_url} download className="text-zinc-700 underline">
                         Descargar
                       </a>
                     </div>
