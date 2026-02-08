@@ -249,18 +249,18 @@ export async function POST(req: NextRequest) {
       });
 
       // Guardar PDF en Storage
-      const { path } = await guardarPdfEnStorage({
+      const { path, publicUrl } = await guardarPdfEnStorage({
         empresa_id,
         egreso_id: entregaId,
         pdfBuffer: Buffer.from(pdfBuffer),
       });
 
-      pdfPath = path;
+      pdfPath = publicUrl ?? path;
 
       // Persistir URL del PDF en la entrega
       const { error: pdfUpdateError } = await supabase
         .from("entregas")
-        .update({ pdf_url: path })
+        .update({ pdf_url: publicUrl ?? path })
         .eq("id", entregaId);
 
       if (pdfUpdateError) {

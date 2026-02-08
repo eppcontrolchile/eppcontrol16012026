@@ -10,7 +10,8 @@ import { createClient } from "@supabase/supabase-js";
 export async function guardarPdfEnStorage(params: {
   empresa_id: string;
   egreso_id: string;
-  pdfBuffer: Buffer;
+  // Acepta Buffer (Node) o Uint8Array (Node/Edge-safe)
+  pdfBuffer: Buffer | Uint8Array;
 }) {
   const { empresa_id, egreso_id, pdfBuffer } = params;
 
@@ -21,9 +22,16 @@ export async function guardarPdfEnStorage(params: {
 
   const filePath = `empresas/${empresa_id}/egresos/${egreso_id}.pdf`;
 
+  // Normaliza a Buffer cuando exista (Node) para máxima compatibilidad
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const B: any = (globalThis as any).Buffer;
+  const data = typeof B !== "undefined" && !(pdfBuffer instanceof B)
+    ? B.from(pdfBuffer)
+    : pdfBuffer;
+
   const { error } = await supabase.storage
     .from("egresos-pdf")
-    .upload(filePath, pdfBuffer, {
+    .upload(filePath, data as any, {
       contentType: "application/pdf",
       upsert: true,
     });
@@ -33,7 +41,15 @@ export async function guardarPdfEnStorage(params: {
     throw new Error("Error guardando PDF en Storage");
   }
 
+  // Obtener URL pública (bucket público)
+  const { data: publicData } = supabase.storage
+    .from("egresos-pdf")
+    .getPublicUrl(filePath);
+
+  const publicUrl = publicData?.publicUrl ?? null;
+
   return {
     path: filePath,
+    publicUrl,
   };
 }
