@@ -2,11 +2,15 @@
 // API de egresos – C6
 // Orquestador backend: delega FIFO y transacción 100% a PostgreSQL
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { generarPdfEntrega } from "@/utils/entrega-pdf";
 import { guardarPdfEnStorage } from "@/utils/guardar-pdf-storage";
 import { enviarCorreosEgreso } from "@/utils/enviar-mail-egreso";
+
+// 👇 AQUÍ VA (justo después de los imports)
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 async function urlToDataUrl(input?: string | null): Promise<string | null> {
   if (!input) return null;
@@ -24,11 +28,11 @@ async function urlToDataUrl(input?: string | null): Promise<string | null> {
 
   const contentType = res.headers.get("content-type") || "application/octet-stream";
   const ab = await res.arrayBuffer();
+  // Node runtime only (this route is forced to nodejs runtime)
   const b64 = Buffer.from(ab).toString("base64");
   return `data:${contentType};base64,${b64}`;
 }
 
-export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /**
@@ -38,7 +42,7 @@ export const revalidate = 0;
  * 2. Ejecutar registrar_egreso_fifo (RPC)
  * 3. Retornar resultado
  */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
@@ -160,125 +164,149 @@ export async function POST(req: Request) {
     // 2️⃣.1 Generar PDF automático post-RPC
     // ─────────────────────────────────────────────
 
-    // data debe traer: entrega_id, total_unidades, costo_total_iva
-    // Obtener datos completos de la entrega para el PDF
-    const { data: entregaData, error: entregaError } = await supabase
-      .from("entregas")
-      .select(`
-        id,
-        fecha_entrega,
-        firma_url,
-        costo_total_iva,
-        total_unidades,
-        empresas:empresa_id ( nombre, rut, logo_url ),
-        trabajadores:trabajador_id ( nombre, rut, email ),
-        centros_trabajo:centro_id ( nombre ),
-        entrega_items (
-          categoria,
-          nombre_epp,
-          talla,
-          cantidad
-        )
-      `)
-      .eq("id", entregaId)
-      .single();
+    let pdfPath: string | null = null;
 
-    if (entregaError || !entregaData) {
-      console.error("PDF ERROR: no entregaData", { entregaId, entregaError });
-      throw new Error(
-        `No se pudo obtener la entrega para generar el PDF (entrega_id=${entregaId})` +
-          (entregaError?.message ? `: ${entregaError.message}` : "")
-      );
-    }
+    // Se usan también para correos (solo si el PDF se genera OK)
+    let empresaRel: any = null;
+    let trabajadorRel: any = null;
+    let centroRel: any = null;
 
-    // Normalizar relaciones: a veces llegan como objeto, a veces como array (según typing/joins)
-    const empresaRel: any = Array.isArray((entregaData as any).empresas)
-      ? (entregaData as any).empresas[0]
-      : (entregaData as any).empresas;
+    try {
+      // data debe traer: entrega_id, total_unidades, costo_total_iva
+      // Obtener datos completos de la entrega para el PDF
+      const { data: entregaData, error: entregaError } = await supabase
+        .from("entregas")
+        .select(`
+          id,
+          fecha_entrega,
+          firma_url,
+          costo_total_iva,
+          total_unidades,
+          empresas:empresa_id ( nombre, rut, logo_url ),
+          trabajadores:trabajador_id ( nombre, rut, email ),
+          centros_trabajo:centro_id ( nombre ),
+          entrega_items (
+            categoria,
+            nombre_epp,
+            talla,
+            cantidad
+          )
+        `)
+        .eq("id", entregaId)
+        .single();
 
-    const trabajadorRel: any = Array.isArray((entregaData as any).trabajadores)
-      ? (entregaData as any).trabajadores[0]
-      : (entregaData as any).trabajadores;
+      if (entregaError || !entregaData) {
+        console.error("PDF ERROR: no entregaData", { entregaId, entregaError });
+        throw new Error(
+          `No se pudo obtener la entrega para generar el PDF (entrega_id=${entregaId})` +
+            (entregaError?.message ? `: ${entregaError.message}` : "")
+        );
+      }
 
-    const centroRel: any = Array.isArray((entregaData as any).centros_trabajo)
-      ? (entregaData as any).centros_trabajo[0]
-      : (entregaData as any).centros_trabajo;
+      // Normalizar relaciones: a veces llegan como objeto, a veces como array (según typing/joins)
+      empresaRel = Array.isArray((entregaData as any).empresas)
+        ? (entregaData as any).empresas[0]
+        : (entregaData as any).empresas;
 
-    // Normalizar imágenes para el PDF:
-    // - jsPDF no debe recibir rutas locales (provocan error "allowFsRead")
-    // - Convertimos URLs http(s) a data URL base64
-    const logoDataUrl = await urlToDataUrl(empresaRel?.logo_url ?? null);
-    const firmaDataUrl = await urlToDataUrl(entregaData.firma_url ?? null);
+      trabajadorRel = Array.isArray((entregaData as any).trabajadores)
+        ? (entregaData as any).trabajadores[0]
+        : (entregaData as any).trabajadores;
 
-    // Armar estructura PDF
-    const pdfBuffer = await generarPdfEntrega({
-      empresa: {
-        nombre: empresaRel?.nombre,
-        rut: empresaRel?.rut,
-        logo_url: logoDataUrl ?? undefined,
-      },
-      egreso: {
-        id: entregaData.id,
-        fecha: entregaData.fecha_entrega,
-        trabajador: {
-          nombre: trabajadorRel?.nombre,
-          rut: trabajadorRel?.rut,
-          centro: centroRel?.nombre,
+      centroRel = Array.isArray((entregaData as any).centros_trabajo)
+        ? (entregaData as any).centros_trabajo[0]
+        : (entregaData as any).centros_trabajo;
+
+      // Normalizar imágenes para el PDF:
+      // - jsPDF no debe recibir rutas locales (provocan error "allowFsRead")
+      // - Convertimos URLs http(s) a data URL base64
+      const logoDataUrl = await urlToDataUrl(empresaRel?.logo_url ?? null);
+      const firmaDataUrl = await urlToDataUrl(entregaData.firma_url ?? null);
+
+      // Armar estructura PDF
+      const pdfBuffer = await generarPdfEntrega({
+        empresa: {
+          nombre: empresaRel?.nombre,
+          rut: empresaRel?.rut,
+          logo_url: logoDataUrl ?? undefined,
         },
-        items: (Array.isArray((entregaData as any).entrega_items) ? (entregaData as any).entrega_items : []).map((i: any) => ({
-          categoria: i.categoria,
-          epp: i.nombre_epp,
-          tallaNumero: i.talla,
-          cantidad: i.cantidad,
-        })),
-        // Si no hay firma o no es http(s)/data URL, se deja null para que el PDF no intente leer FS
-        firmaBase64: firmaDataUrl,
-      },
-    });
+        egreso: {
+          id: entregaData.id,
+          fecha: entregaData.fecha_entrega,
+          trabajador: {
+            nombre: trabajadorRel?.nombre,
+            rut: trabajadorRel?.rut,
+            centro: centroRel?.nombre,
+          },
+          items: (Array.isArray((entregaData as any).entrega_items) ? (entregaData as any).entrega_items : []).map((i: any) => ({
+            categoria: i.categoria,
+            epp: i.nombre_epp,
+            tallaNumero: i.talla,
+            cantidad: i.cantidad,
+          })),
+          // Si no hay firma o no es http(s)/data URL, se deja null para que el PDF no intente leer FS
+          firmaBase64: firmaDataUrl,
+        },
+      });
 
-    // Guardar PDF en Storage
-    const { path } = await guardarPdfEnStorage({
-      empresa_id,
-      egreso_id: entregaId,
-      pdfBuffer: Buffer.from(pdfBuffer),
-    });
+      // Guardar PDF en Storage
+      const { path } = await guardarPdfEnStorage({
+        empresa_id,
+        egreso_id: entregaId,
+        pdfBuffer: Buffer.from(pdfBuffer),
+      });
 
-    // Persistir URL del PDF en la entrega
-    const { error: pdfUpdateError } = await supabase
-      .from("entregas")
-      .update({ pdf_url: path })
-      .eq("id", entregaId);
+      pdfPath = path;
 
-    if (pdfUpdateError) {
-      throw new Error("No se pudo guardar la URL del PDF");
+      // Persistir URL del PDF en la entrega
+      const { error: pdfUpdateError } = await supabase
+        .from("entregas")
+        .update({ pdf_url: path })
+        .eq("id", entregaId);
+
+      if (pdfUpdateError) {
+        throw new Error("No se pudo guardar la URL del PDF");
+      }
+    } catch (pdfErr) {
+      console.error("PDF ERROR (non-blocking):", pdfErr);
     }
 
     // ─────────────────────────────────────────────
     // 2️⃣.2 Envío de correos post-egreso (D4)
     // ─────────────────────────────────────────────
-    try {
-      // Obtener correo del administrador (usuario)
-      const { data: usuarioMail } = await supabase
-        .from("usuarios")
-        .select("email")
-        .eq("id", usuario_id)
-        .single();
+    if (pdfPath) {
+      if (!empresaRel || !trabajadorRel) {
+        console.warn("EMAIL SKIPPED: missing empresaRel/trabajadorRel", { entregaId, pdfPath });
+        // Continue without failing
+      } else {
+        try {
+          // Obtener correo del administrador (usuario)
+          const { data: usuarioMail } = await supabase
+            .from("usuarios")
+            .select("email")
+            .eq("id", usuario_id)
+            .single();
 
-      await enviarCorreosEgreso({
-        pdf_url: path,
-        empresa: {
-          nombre: empresaRel?.nombre,
-        },
-        trabajador: {
-          nombre: trabajadorRel?.nombre,
-          rut: trabajadorRel?.rut,
-          email: trabajadorRel?.email ?? null,
-        },
-        emailAdmin: usuarioMail?.email,
-      });
-    } catch (mailError) {
-      // No rompe el flujo principal del egreso
-      console.error("ERROR ENVÍO CORREOS EGRESO:", mailError);
+          // Obtener datos completos de la entrega para email (reusing entregaData is not possible here because it's inside try block)
+          // But we have empresaRel and trabajadorRel from above, so we can reuse them only if pdf generation succeeded.
+          // To keep it simple, we use the same variables from the PDF block.
+
+          await enviarCorreosEgreso({
+            pdf_url: pdfPath,
+            empresa: {
+              nombre: empresaRel?.nombre,
+            },
+            trabajador: {
+              nombre: trabajadorRel?.nombre,
+              rut: trabajadorRel?.rut,
+              email: trabajadorRel?.email ?? null,
+            },
+            emailAdmin: usuarioMail?.email,
+          });
+        } catch (mailError) {
+          // No rompe el flujo principal del egreso
+          console.error("ERROR ENVÍO CORREOS EGRESO:", mailError);
+        }
+      }
     }
 
     // ─────────────────────────────────────────────
@@ -288,6 +316,8 @@ export async function POST(req: Request) {
       {
         ok: true,
         entrega_id: entregaId,
+        pdf_url: pdfPath,
+        pdf_status: pdfPath ? "ok" : "failed",
         ...rpcResult,
       },
       { status: 201 }
