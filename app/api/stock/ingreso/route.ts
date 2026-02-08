@@ -71,11 +71,11 @@ export async function POST(req: NextRequest) {
   }
 
   // 3) Resolve empresa_id from usuario
-  const { data: usuario, error: usuarioError } = await supabaseAdmin
-    .from("usuarios")
-    .select("empresa_id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+    const { data: usuario, error: usuarioError } = await supabaseAdmin
+      .from("usuarios")
+      .select("id, empresa_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
   if (usuarioError) {
     return NextResponse.json({ error: usuarioError.message }, { status: 500 });
@@ -141,6 +141,7 @@ export async function POST(req: NextRequest) {
 
       return {
         empresa_id: empresaId,
+        usuario_id: usuario.id,
         categoria,
         nombre_epp,
         talla,

@@ -48,7 +48,7 @@ export async function POST(req: Request) {
 
   const { data: usuario, error: usuarioError } = await supabaseAdmin
     .from("usuarios")
-    .select("empresa_id")
+    .select("id, empresa_id")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
@@ -58,6 +58,10 @@ export async function POST(req: Request) {
 
   if (!usuario?.empresa_id) {
     return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
+  }
+
+  if (!usuario?.id) {
+    return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -75,6 +79,7 @@ export async function POST(req: Request) {
 
     return {
       empresa_id: usuario.empresa_id,
+      usuario_id: usuario.id,
       categoria: String(it.categoria || "").trim(),
       nombre_epp: String((it.nombre_epp ?? it.nombreEpp) || "").trim(),
       talla,
@@ -107,8 +112,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(
+  const res = NextResponse.json(
     { ok: true, inserted: data?.length || 0, rows: data },
     { status: 200 }
   );
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("X-Inserted", String(data?.length || 0));
+  return res;
 }
