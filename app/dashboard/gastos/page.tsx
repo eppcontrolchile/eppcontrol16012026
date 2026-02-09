@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 type Egreso = {
   id: string;
@@ -14,21 +15,13 @@ type Egreso = {
   items: {
     categoria: string;
     epp: string;
-    tallaNumero: string;
+    tallaNumero?: string | null;
     cantidad: number;
     costoTotal: number;
   }[];
   costoTotalEgreso: number;
 };
 
-function getEgresosLocal(): Egreso[] {
-  if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem("egresos") || "[]");
-  } catch {
-    return [];
-  }
-}
 
 function exportGastosCSV(rows: {
   fecha: string;
@@ -82,10 +75,105 @@ export default function GastosPage() {
   const [hasta, setHasta] = useState("");
   const [centro, setCentro] = useState("");
   const [trabajador, setTrabajador] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [debug, setDebug] = useState<{ empresaId?: string; entregasCount?: number } | null>(null);
 
   useEffect(() => {
-    setEgresos(getEgresosLocal());
-  }, []);
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const supabase = supabaseBrowser();
+
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
+
+        if (userErr) throw userErr;
+        if (!user) throw new Error("No autenticado");
+
+        // Resolve empresa_id desde tabla usuarios
+        const { data: usuarioRow, error: usuarioErr } = await supabase
+          .from("usuarios")
+          .select("empresa_id")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (usuarioErr) throw usuarioErr;
+        const empresaId = usuarioRow?.empresa_id;
+        if (!empresaId) throw new Error("No se pudo resolver empresa_id");
+        if (!cancelled) setDebug({ empresaId });
+
+        // Traer entregas + items para construir gastos
+        const { data: entregas, error: entregasErr } = await supabase
+          .from("entregas")
+          .select(
+            "id,fecha_entrega,costo_total_iva,trabajadores:trabajador_id(nombre,rut),centros_trabajo:centro_id(nombre),entrega_items(categoria,nombre_epp,talla,cantidad,costo_unitario_iva)"
+          )
+          .eq("empresa_id", empresaId)
+          .order("fecha_entrega", { ascending: false });
+
+        if (entregasErr) throw entregasErr;
+        if (!cancelled) setDebug({ empresaId, entregasCount: (entregas ?? []).length });
+
+        const egresosMap: Egreso[] = (entregas ?? []).map((e: any) => {
+          const centroNombre = e?.centros_trabajo?.nombre ?? "";
+          const trabajadorNombre = e?.trabajadores?.nombre ?? "";
+          const trabajadorRut = e?.trabajadores?.rut ?? "";
+
+          const items = Array.isArray(e?.entrega_items)
+            ? e.entrega_items.map((it: any) => {
+                const cantidad = Number(it?.cantidad ?? 0);
+                const cu = Number(it?.costo_unitario_iva ?? 0);
+                return {
+                  categoria: String(it?.categoria ?? ""),
+                  epp: String(it?.nombre_epp ?? ""),
+                  tallaNumero: it?.talla ?? null,
+                  cantidad,
+                  costoTotal: cantidad * cu,
+                };
+              })
+            : [];
+
+          const costoTotalEgreso = Number(e?.costo_total_iva ?? 0);
+
+          return {
+            id: String(e?.id ?? ""),
+            fecha: String(e?.fecha_entrega ?? ""),
+            trabajador: {
+              nombre: trabajadorNombre,
+              rut: trabajadorRut,
+              centro: centroNombre,
+            },
+            items,
+            costoTotalEgreso,
+          };
+        });
+
+        if (!cancelled) setEgresos(egresosMap);
+      } catch (err: any) {
+        console.error("GASTOS LOAD ERROR", err);
+        if (!cancelled) {
+          setError(err?.message ?? "Error cargando gastos");
+          setDebug(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadNonce]);
 
   const egresosFiltrados = useMemo(() => {
     return egresos.filter((e) => {
@@ -190,6 +278,37 @@ export default function GastosPage() {
           📄 Exportar PDF (próximamente)
         </button>
       </div>
+      {loading && (
+        <div className="rounded-lg border bg-white p-3 text-sm text-zinc-600">
+          Cargando gastos...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+      {!loading && !error && egresos.length === 0 && (
+        <div className="rounded-xl border bg-white p-4 text-sm">
+          <p className="font-medium">Aún no hay gastos para mostrar.</p>
+          <p className="mt-1 text-zinc-600">
+            Si sabes que ya existen entregas, esto suele ser por permisos (RLS) o por empresa_id.
+          </p>
+          {debug && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Debug: empresa_id={debug.empresaId ?? "—"} · entregas={
+                typeof debug.entregasCount === "number" ? debug.entregasCount : "—"
+              }
+            </p>
+          )}
+          <button
+            onClick={() => setReloadNonce((n) => n + 1)}
+            className="mt-3 rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50"
+          >
+            Reintentar carga
+          </button>
+        </div>
+      )}
 
       {/* FILTROS */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">

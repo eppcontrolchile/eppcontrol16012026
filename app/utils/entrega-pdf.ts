@@ -69,7 +69,17 @@ function formatDateTimeSantiago(input: string): { date: string; time: string } {
     const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test((input || "").trim());
     if (isDateOnly) {
       const date = input.split("-").reverse().join("/");
-      return { date, time: "" };
+      // If we only have a date, we still show a time. Use the current time in America/Santiago.
+      // This keeps the PDF consistent with "Fecha + hora" in UI when the stored value lacks time.
+      const nowParts = new Intl.DateTimeFormat("es-CL", {
+        timeZone: "America/Santiago",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(new Date());
+      const getNow = (t: string) => nowParts.find((p) => p.type === t)?.value || "";
+      const time = `${getNow("hour")}:${getNow("minute")}`;
+      return { date, time };
     }
 
     const d = new Date(input);
@@ -399,15 +409,17 @@ export async function generarPdfEntrega(params: {
     y += 6;
   }
 
-  // Responsable de entrega (si lo hay)
-  if (params.responsable?.nombre) {
+  {
     doc.setFontSize(9);
     doc.setTextColor(60);
-    const rr = params.responsable.rut
+
+    const respNombre = (params.responsable?.nombre || "").trim() || "—";
+    const rr = params.responsable?.rut
       ? ` (${formatRut(params.responsable.rut)})`
       : "";
-    const respLine = `Responsable de entrega: ${params.responsable.nombre}${rr}`;
+    const respLine = `Responsable de entrega: ${respNombre}${rr}`;
     doc.text(respLine, pageWidth - marginX, y, { align: "right" });
+
     doc.setTextColor(20);
     y += 6;
   }
@@ -427,7 +439,7 @@ export async function generarPdfEntrega(params: {
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
-    const footerY = doc.internal.pageSize.getHeight() - 25;
+    const footerY = doc.internal.pageSize.getHeight() - 40;
     // Logo EPP Control centrado
     if (isDataImageUrl(eppLogoDataUrl)) {
       doc.addImage(eppLogoDataUrl, "PNG", pageWidth / 2 - 12, footerY + 1, 24, 10);
@@ -459,7 +471,7 @@ export async function generarPdfEntrega(params: {
     doc.text(
       `Página ${i} de ${pageCount}`,
       pageWidth - marginX,
-      footerY + 24,
+      footerY + 29,
       { align: "right" }
     );
     doc.setTextColor(20);

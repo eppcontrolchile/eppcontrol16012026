@@ -290,7 +290,7 @@ export async function POST(req: NextRequest) {
           // But we have empresaRel and trabajadorRel from above, so we can reuse them only if pdf generation succeeded.
           // To keep it simple, we use the same variables from the PDF block.
 
-          await enviarCorreosEgreso({
+          enviarCorreosEgreso({
             pdf_url: pdfPath,
             empresa: {
               nombre: empresaRel?.nombre,
@@ -301,6 +301,12 @@ export async function POST(req: NextRequest) {
               email: trabajadorRel?.email ?? null,
             },
             emailAdmin: usuarioMail?.email,
+          }).catch((err) => {
+            console.error("ERROR ENVÍO CORREOS EGRESO (non-blocking):", {
+              entregaId,
+              pdfPath,
+              err,
+            });
           });
         } catch (mailError) {
           // No rompe el flujo principal del egreso
