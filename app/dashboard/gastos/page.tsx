@@ -102,7 +102,7 @@ export default function GastosPage() {
         const { data: usuarioRow, error: usuarioErr } = await supabase
           .from("usuarios")
           .select("empresa_id")
-          .eq("id", user.id)
+          .eq("auth_user_id", user.id)
           .maybeSingle();
 
         if (usuarioErr) throw usuarioErr;

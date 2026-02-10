@@ -216,6 +216,23 @@ export async function POST(req: NextRequest) {
         ? (entregaData as any).centros_trabajo[0]
         : (entregaData as any).centros_trabajo;
 
+      // Responsable de entrega (usuario que registró el egreso)
+      let responsable: { nombre: string; rut?: string | null } | null = null;
+      try {
+        const { data: respUser } = await supabase
+          .from("usuarios")
+          .select("nombre,rut")
+          .eq("id", usuario_id)
+          .maybeSingle();
+
+        if (respUser?.nombre) {
+          responsable = { nombre: respUser.nombre, rut: respUser.rut ?? null };
+        }
+      } catch {
+        // non-blocking
+        responsable = null;
+      }
+
       // Normalizar imágenes para el PDF:
       // - jsPDF no debe recibir rutas locales (provocan error "allowFsRead")
       // - Convertimos URLs http(s) a data URL base64
@@ -224,6 +241,7 @@ export async function POST(req: NextRequest) {
 
       // Armar estructura PDF
       const pdfBuffer = await generarPdfEntrega({
+        responsable,
         empresa: {
           nombre: empresaRel?.nombre,
           rut: empresaRel?.rut,
