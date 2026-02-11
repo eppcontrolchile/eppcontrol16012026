@@ -1,6 +1,4 @@
 // app/dashboard/usuarios/page.tsx
-
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,7 +11,8 @@ type UsuarioRow = {
   nombre: string;
   email: string;
   activo: boolean;
-  rol: string | null; // compat con tu app actual
+  rol: string | null;
+  auth_user_id?: string | null;
 };
 
 export default function UsuariosPage() {
@@ -21,13 +20,20 @@ export default function UsuariosPage() {
 
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [sendingPw, setSendingPw] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
 
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [miRol, setMiRol] = useState<string | null>(null);
+  const [miUsuarioId, setMiUsuarioId] = useState<string | null>(null);
+  const [planTipo, setPlanTipo] = useState<string | null>(null);
 
   const [roles, setRoles] = useState<Rol[]>([]);
   const [usuarios, setUsuarios] = useState<UsuarioRow[]>([]);
+
+  const [nuevo, setNuevo] = useState({ nombre: "", email: "", rol: "solo_lectura" });
 
   const rolesByName = useMemo(() => {
     const m = new Map<string, Rol>();
@@ -35,72 +41,90 @@ export default function UsuariosPage() {
     return m;
   }, [roles]);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function loadAll() {
+    setLoading(true);
+    setError(null);
+    setOk(null);
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+    try {
+      const { data: au, error: auErr } = await supabase.auth.getUser();
+      if (auErr) throw auErr;
+      if (!au?.user) throw new Error("No autenticado");
 
-      try {
-        const {
-          data: { user },
-          error: userErr,
-        } = await supabase.auth.getUser();
-        if (userErr) throw userErr;
-        if (!user) throw new Error("No autenticado");
+      // 1) Resolver usuario interno (primario por auth_user_id)
+      let me = await supabase
+        .from("usuarios")
+        .select("id, empresa_id, rol, activo, email")
+        .eq("auth_user_id", au.user.id)
+        .maybeSingle();
 
-        // 1) Resolver usuario interno (empresa + rol)
-        const { data: me, error: meErr } = await supabase
+      // Fallback: si no existe por auth_user_id, intenta por email y linkea auth_user_id
+      if (!me.data?.id) {
+        const byEmail = await supabase
           .from("usuarios")
-          .select("empresa_id, rol")
-          .eq("auth_user_id", user.id)
+          .select("id, empresa_id, rol, activo, email")
+          .eq("email", (au.user.email || "").toLowerCase())
           .maybeSingle();
 
-        if (meErr) throw meErr;
-        if (!me?.empresa_id) throw new Error("No se pudo resolver empresa_id");
+        if (byEmail.data?.id) {
+          await supabase
+            .from("usuarios")
+            .update({ auth_user_id: au.user.id })
+            .eq("id", byEmail.data.id);
 
-        if (cancelled) return;
-        setEmpresaId(me.empresa_id);
-        setMiRol(me.rol ?? null);
-
-        // 2) Roles disponibles
-        const { data: rolesData, error: rolesErr } = await supabase
-          .from("roles")
-          .select("id,nombre")
-          .order("nombre", { ascending: true });
-
-        if (rolesErr) throw rolesErr;
-
-        // 3) Usuarios de la empresa
-        const { data: usuariosData, error: usuariosErr } = await supabase
-          .from("usuarios")
-          .select("id,nombre,email,activo,rol")
-          .eq("empresa_id", me.empresa_id)
-          .order("nombre", { ascending: true });
-
-        if (usuariosErr) throw usuariosErr;
-
-        if (cancelled) return;
-        setRoles((rolesData as Rol[]) ?? []);
-        setUsuarios((usuariosData as UsuarioRow[]) ?? []);
-      } catch (e: any) {
-        console.error("USUARIOS PAGE LOAD ERROR", e);
-        if (!cancelled) setError(e?.message ?? "Error cargando usuarios");
-      } finally {
-        if (!cancelled) setLoading(false);
+          me = byEmail as any;
+        }
       }
+
+      if (!me.data?.empresa_id) throw new Error("No se pudo resolver empresa_id");
+
+      setEmpresaId(me.data.empresa_id);
+      setMiRol(me.data.rol ?? null);
+      setMiUsuarioId(me.data.id);
+
+      // 2) Plan tipo (para habilitar passwords/roles avanzados)
+      const { data: emp } = await supabase
+        .from("empresas")
+        .select("plan_tipo")
+        .eq("id", me.data.empresa_id)
+        .maybeSingle();
+
+      setPlanTipo((emp as any)?.plan_tipo ?? null);
+
+      // 3) Roles
+      const { data: rolesData, error: rolesErr } = await supabase
+        .from("roles")
+        .select("id,nombre")
+        .order("nombre", { ascending: true });
+
+      if (rolesErr) throw rolesErr;
+
+      // 4) Usuarios empresa
+      const { data: usuariosData, error: usuariosErr } = await supabase
+        .from("usuarios")
+        .select("id,nombre,email,activo,rol,auth_user_id")
+        .eq("empresa_id", me.data.empresa_id)
+        .order("nombre", { ascending: true });
+
+      if (usuariosErr) throw usuariosErr;
+
+      setRoles((rolesData as Rol[]) ?? []);
+      setUsuarios((usuariosData as UsuarioRow[]) ?? []);
+    } catch (e: any) {
+      console.error("USUARIOS PAGE LOAD ERROR", e);
+      setError(e?.message ?? "Error cargando usuarios");
+    } finally {
+      setLoading(false);
     }
+  }
 
-    load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function syncUsuarioRol(usuarioId: string, rolNombre: string) {
-    // Mantener compatibilidad con app actual: usuarios.rol
+    // compat: usuarios.rol
     const { error: upErr } = await supabase
       .from("usuarios")
       .update({ rol: rolNombre })
@@ -108,11 +132,10 @@ export default function UsuariosPage() {
 
     if (upErr) throw upErr;
 
-    // Sincronizar usuarios_roles (1 rol por usuario)
+    // usuarios_roles (1 rol)
     const rol = rolesByName.get(rolNombre);
-    if (!rol) return; // si no existe por data, no rompe
+    if (!rol) return;
 
-    // borrar roles previos y setear el nuevo
     const { error: delErr } = await supabase
       .from("usuarios_roles")
       .delete()
@@ -128,13 +151,98 @@ export default function UsuariosPage() {
     if (insErr) throw insErr;
   }
 
-  async function toggleActivo(usuarioId: string, activo: boolean) {
+  async function saveUsuario(u: UsuarioRow) {
+    // Reglas: no auto-democión / no auto-desactivación
+    if (u.id === miUsuarioId) {
+      if (!u.activo) throw new Error("No puedes desactivarte a ti mismo.");
+      if (u.rol !== "admin") throw new Error("No puedes quitarte el rol admin.");
+    }
+
     const { error: err } = await supabase
       .from("usuarios")
-      .update({ activo })
-      .eq("id", usuarioId);
+      .update({
+        nombre: u.nombre.trim(),
+        email: u.email.trim().toLowerCase(),
+        activo: !!u.activo,
+      })
+      .eq("id", u.id);
 
     if (err) throw err;
+
+    await syncUsuarioRol(u.id, u.rol ?? "solo_lectura");
+  }
+
+  async function crearUsuario() {
+    setError(null);
+    setOk(null);
+
+    if (!empresaId) return;
+    if (!nuevo.nombre.trim() || !nuevo.email.trim()) {
+      setError("Completa nombre y email.");
+      return;
+    }
+
+    try {
+      setCreating(true);
+
+      // Si no es advanced, no creamos usuarios por ahora (regla de producto)
+      if (planTipo !== "advanced") {
+        throw new Error("Usuarios y roles avanzados: disponible solo en plan Advanced.");
+      }
+
+      const res = await fetch("/api/admin/usuarios/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          empresa_id: empresaId,
+          nombre: nuevo.nombre.trim(),
+          email: nuevo.email.trim().toLowerCase(),
+          rol: nuevo.rol,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.reason ?? "No se pudo crear el usuario");
+      }
+
+      setOk("Usuario creado. Se envió correo para crear contraseña.");
+      setNuevo({ nombre: "", email: "", rol: "solo_lectura" });
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ?? "Error creando usuario");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function enviarLinkClave(email: string, usuarioId: string) {
+    setError(null);
+    setOk(null);
+    if (!empresaId) return;
+
+    try {
+      setSendingPw(usuarioId);
+
+      if (planTipo !== "advanced") {
+        throw new Error("Cambio/creación de contraseña: disponible solo en plan Advanced.");
+      }
+
+      const res = await fetch("/api/admin/usuarios/send-set-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ empresa_id: empresaId, email }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.reason ?? "No se pudo enviar el link");
+
+      setOk("Listo: se envió un correo con enlace para definir contraseña.");
+    } catch (e: any) {
+      setError(e?.message ?? "Error enviando enlace");
+    } finally {
+      setSendingPw(null);
+    }
   }
 
   if (loading) {
@@ -145,7 +253,7 @@ export default function UsuariosPage() {
     );
   }
 
-  if (error) {
+  if (error && !usuarios.length) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
         {error}
@@ -153,7 +261,6 @@ export default function UsuariosPage() {
     );
   }
 
-  // Gate: solo admin
   if (miRol !== "admin") {
     return (
       <div className="rounded-lg border bg-white p-4 text-sm text-zinc-700">
@@ -161,6 +268,8 @@ export default function UsuariosPage() {
       </div>
     );
   }
+
+  const isAdvanced = planTipo === "advanced";
 
   return (
     <div className="space-y-6">
@@ -171,6 +280,78 @@ export default function UsuariosPage() {
         </p>
       </div>
 
+      {/* INFO ROLES */}
+      <div className="rounded-xl border bg-white p-4 text-sm">
+        <p className="font-medium">¿Qué puede hacer cada rol?</p>
+        <ul className="mt-2 list-disc pl-5 text-zinc-600 space-y-1">
+          <li><b>admin</b>: opera todo, ve costos, define usuarios, administra todo.</li>
+          <li><b>supervisor</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.</li>
+          <li><b>bodega</b>: entrega, ingresa EPP, ve stock.</li>
+          <li><b>solo_entrega</b>: solo entrega (ideal móvil / celular).</li>
+          <li><b>solo_lectura</b>: lectura sin edición.</li>
+          <li><b>gerencia</b>: lectura completa (ideal reportes y control).</li>
+        </ul>
+
+        {!isAdvanced && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+            Usuarios/roles avanzados + gestión de contraseñas: solo en <b>Plan Advanced</b>.
+          </div>
+        )}
+      </div>
+
+      {(error || ok) && (
+        <div className={`rounded-lg border p-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-green-200 bg-green-50 text-green-700"}`}>
+          {error ?? ok}
+        </div>
+      )}
+
+      {/* CREAR USUARIO */}
+      <div className="rounded-xl border bg-white p-4 space-y-3">
+        <p className="font-medium">Crear usuario</p>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+          <input
+            className="input"
+            placeholder="Nombre"
+            value={nuevo.nombre}
+            onChange={(e) => setNuevo((p) => ({ ...p, nombre: e.target.value }))}
+          />
+          <input
+            className="input"
+            placeholder="correo@empresa.cl"
+            value={nuevo.email}
+            onChange={(e) => setNuevo((p) => ({ ...p, email: e.target.value }))}
+          />
+          <select
+            className="input"
+            value={nuevo.rol}
+            onChange={(e) => setNuevo((p) => ({ ...p, rol: e.target.value }))}
+          >
+            {(roles.length ? roles : [
+              { id: "x", nombre: "admin" },
+              { id: "x", nombre: "supervisor" },
+              { id: "x", nombre: "bodega" },
+              { id: "x", nombre: "solo_entrega" },
+              { id: "x", nombre: "solo_lectura" },
+              { id: "x", nombre: "gerencia" },
+            ]).map((r) => (
+              <option key={r.nombre} value={r.nombre}>
+                {r.nombre}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={crearUsuario}
+            disabled={!isAdvanced || creating}
+            className="rounded-lg bg-sky-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+          >
+            {creating ? "Creando…" : "Crear + Enviar link"}
+          </button>
+        </div>
+      </div>
+
+      {/* TABLA */}
       <div className="overflow-auto rounded-xl border bg-white">
         <table className="min-w-full text-sm">
           <thead className="bg-zinc-50">
@@ -179,82 +360,127 @@ export default function UsuariosPage() {
               <th className="p-2 text-left">Email</th>
               <th className="p-2 text-left">Rol</th>
               <th className="p-2 text-center">Activo</th>
-              <th className="p-2 text-right">Acción</th>
+              <th className="p-2 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {usuarios.map((u) => (
-              <tr key={u.id} className="border-t">
-                <td className="p-2">{u.nombre}</td>
-                <td className="p-2">{u.email}</td>
-                <td className="p-2">
-                  <select
-                    className="input"
-                    value={u.rol ?? "solo_lectura"}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setUsuarios((prev) =>
-                        prev.map((x) => (x.id === u.id ? { ...x, rol: v } : x))
-                      );
-                    }}
-                  >
-                    {(roles.length ? roles : [
-                      { id: "x", nombre: "admin" },
-                      { id: "x", nombre: "supervisor" },
-                      { id: "x", nombre: "bodega" },
-                      { id: "x", nombre: "solo_lectura" },
-                    ]).map((r) => (
-                      <option key={r.nombre} value={r.nombre}>
-                        {r.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="p-2 text-center">
-                  <input
-                    type="checkbox"
-                    checked={!!u.activo}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setUsuarios((prev) =>
-                        prev.map((x) =>
-                          x.id === u.id ? { ...x, activo: checked } : x
+            {usuarios.map((u) => {
+              const isMe = u.id === miUsuarioId;
+
+              return (
+                <tr key={u.id} className="border-t">
+                  <td className="p-2">
+                    <input
+                      className="input"
+                      value={u.nombre ?? ""}
+                      onChange={(e) =>
+                        setUsuarios((prev) =>
+                          prev.map((x) => (x.id === u.id ? { ...x, nombre: e.target.value } : x))
                         )
-                      );
-                    }}
-                  />
-                </td>
-                <td className="p-2 text-right">
-                  <button
-                    disabled={savingId === u.id}
-                    onClick={async () => {
-                      setSavingId(u.id);
-                      setError(null);
-                      try {
-                        await toggleActivo(u.id, !!u.activo);
-                        await syncUsuarioRol(u.id, u.rol ?? "solo_lectura");
-                      } catch (e: any) {
-                        console.error("SAVE USER ERROR", e);
-                        setError(e?.message ?? "Error guardando cambios");
-                      } finally {
-                        setSavingId(null);
                       }
-                    }}
-                    className="rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                  >
-                    Guardar
-                  </button>
-                </td>
-              </tr>
-            ))}
+                    />
+                  </td>
+
+                  <td className="p-2">
+                    <input
+                      className="input"
+                      value={u.email ?? ""}
+                      onChange={(e) =>
+                        setUsuarios((prev) =>
+                          prev.map((x) => (x.id === u.id ? { ...x, email: e.target.value } : x))
+                        )
+                      }
+                    />
+                  </td>
+
+                  <td className="p-2">
+                    <select
+                      className="input"
+                      value={u.rol ?? "solo_lectura"}
+                      disabled={isMe} // no te puedes cambiar rol
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setUsuarios((prev) =>
+                          prev.map((x) => (x.id === u.id ? { ...x, rol: v } : x))
+                        );
+                      }}
+                    >
+                      {(roles.length ? roles : [
+                        { id: "x", nombre: "admin" },
+                        { id: "x", nombre: "supervisor" },
+                        { id: "x", nombre: "bodega" },
+                        { id: "x", nombre: "solo_entrega" },
+                        { id: "x", nombre: "solo_lectura" },
+                        { id: "x", nombre: "gerencia" },
+                      ]).map((r) => (
+                        <option key={r.nombre} value={r.nombre}>
+                          {r.nombre}
+                        </option>
+                      ))}
+                    </select>
+                    {isMe && (
+                      <p className="mt-1 text-xs text-zinc-500">
+                        (Protegido) No puedes cambiar tu propio rol.
+                      </p>
+                    )}
+                  </td>
+
+                  <td className="p-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={!!u.activo}
+                      disabled={isMe} // no te puedes desactivar
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setUsuarios((prev) =>
+                          prev.map((x) => (x.id === u.id ? { ...x, activo: checked } : x))
+                        );
+                      }}
+                    />
+                  </td>
+
+                  <td className="p-2">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        disabled={savingId === u.id}
+                        onClick={async () => {
+                          setSavingId(u.id);
+                          setError(null);
+                          setOk(null);
+                          try {
+                            await saveUsuario(u);
+                            setOk("Cambios guardados.");
+                          } catch (e: any) {
+                            setError(e?.message ?? "Error guardando cambios");
+                          } finally {
+                            setSavingId(null);
+                          }
+                        }}
+                        className="rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                      >
+                        {savingId === u.id ? "Guardando…" : "Guardar"}
+                      </button>
+
+                      <button
+                        disabled={!isAdvanced || sendingPw === u.id}
+                        onClick={() => enviarLinkClave(u.email, u.id)}
+                        className="rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                      >
+                        {sendingPw === u.id ? "Enviando…" : "Enviar link clave"}
+                      </button>
+                    </div>
+
+                    {isMe && (
+                      <p className="mt-1 text-xs text-zinc-500 text-right">
+                        (Protegido) No puedes desactivarte.
+                      </p>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-
-        {!empresaId && (
-          <div className="p-3 text-xs text-zinc-500">
-            (Aviso) No se pudo resolver empresa_id.
-          </div>
-        )}
       </div>
     </div>
   );

@@ -221,12 +221,12 @@ export async function POST(req: NextRequest) {
       try {
         const { data: respUser } = await supabase
           .from("usuarios")
-          .select("nombre,rut")
+          .select("nombre")
           .eq("id", usuario_id)
           .maybeSingle();
 
         if (respUser?.nombre) {
-          responsable = { nombre: respUser.nombre, rut: respUser.rut ?? null };
+          responsable = { nombre: respUser.nombre };
         }
       } catch {
         // non-blocking

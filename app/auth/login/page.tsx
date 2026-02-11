@@ -6,12 +6,29 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
+function getAppBaseUrl(): string {
+  // Browser
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  // Fallback (build-time env)
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "https://www.eppcontrol.cl"
+  ).replace(/\/$/, "");
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [resetSent, setResetSent] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,6 +65,40 @@ export default function LoginPage() {
       setPassword("");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setResetError(null);
+    setResetSent(null);
+
+    const mail = (email || "").trim().toLowerCase();
+    if (!mail) {
+      setResetError("Escribe tu correo para enviarte el enlace.");
+      return;
+    }
+
+    try {
+      setResetLoading(true);
+
+      const redirectTo = `${getAppBaseUrl()}/auth/set-password`;
+
+      const { error } = await supabaseBrowser().auth.resetPasswordForEmail(mail, {
+        redirectTo,
+      });
+
+      if (error) throw error;
+
+      // Seguridad: no confirmamos si el correo existe o no
+      setResetSent(
+        "Si el correo existe, te llegará un enlace para crear tu nueva contraseña."
+      );
+    } catch (err: any) {
+      setResetError(
+        err?.message ?? "No se pudo enviar el enlace. Intenta nuevamente."
+      );
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -90,11 +141,28 @@ export default function LoginPage() {
 
         {error && <p className="text-red-600 text-sm">{error}</p>}
 
+        {resetError && (
+          <p className="text-red-600 text-sm">{resetError}</p>
+        )}
+
+        {resetSent && (
+          <p className="text-green-700 text-sm">{resetSent}</p>
+        )}
+
         <button
           disabled={isSubmitting}
           className="w-full rounded-lg bg-sky-600 py-2 text-white disabled:opacity-60"
         >
           {isSubmitting ? "Ingresando…" : "Iniciar sesión"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleForgotPassword}
+          disabled={resetLoading}
+          className="text-sm text-sky-600 hover:underline text-center block w-full"
+        >
+          {resetLoading ? "Enviando enlace…" : "Olvidé mi contraseña"}
         </button>
 
         <Link
