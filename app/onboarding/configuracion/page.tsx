@@ -133,6 +133,18 @@ export default function ConfiguracionPage() {
       return;
     }
 
+    // Si el plan es advanced, el server invitará. Si no, responderá skipped:true.
+    await fetch("/api/onboarding/gerencia-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        empresa_id: empresaId,
+        email_gerencia: config.correoGerencia,
+      }),
+    }).catch(() => {
+      // no bloquea onboarding
+    });
+
     router.push("/onboarding/primeros-datos");
   };
 
@@ -160,6 +172,18 @@ export default function ConfiguracionPage() {
       alert(`Error al guardar configuración: ${error.message}`);
       return;
     }
+
+    // Si el plan es advanced, el server invitará. Si no, responderá skipped:true.
+    await fetch("/api/onboarding/gerencia-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        empresa_id: empresaId,
+        email_gerencia: config.correoGerencia,
+      }),
+    }).catch(() => {
+      // no bloquea onboarding
+    });
 
     router.push("/onboarding/primeros-datos");
   };
