@@ -30,6 +30,11 @@ function normalizeUserRole(role: unknown): UserRole {
   return "solo_entrega";
 }
 
+function redirectToRegister(reason: string): never {
+  const q = new URLSearchParams({ reason }).toString();
+  return redirect(`/auth/register?${q}`);
+}
+
 export default async function DashboardLayout({
   children,
 }: {
@@ -90,7 +95,7 @@ export default async function DashboardLayout({
 
       if (usuarioEmailErr) {
         // Usuario autenticado pero sin fila interna resolvible
-        redirect("/auth/register");
+        redirectToRegister("missing_usuario_by_email");
       }
 
       if (usuarioByEmail?.id) {
@@ -113,15 +118,15 @@ export default async function DashboardLayout({
 
   if (usuarioAuthErr || !usuario?.id) {
     // Usuario autenticado pero sin fila interna: deriva a onboarding/registro
-    redirect("/auth/register");
+    redirectToRegister("missing_usuario");
   }
 
   if (usuario.activo === false) {
-    redirect("/auth/login?reason=inactive");
+    return redirect("/auth/login?reason=inactive");
   }
 
   if (!usuario.empresa_id) {
-    redirect("/auth/register");
+    redirectToRegister("missing_empresa_id");
   }
 
   // 3) Empresa
@@ -135,7 +140,7 @@ export default async function DashboardLayout({
 
   if (empresaError || !empresa) {
     // Usuario autenticado pero empresa no accesible/no existe
-    redirect("/onboarding/configuracion");
+    redirectToRegister("missing_empresa");
   }
 
   // 3.1) Onboarding gate

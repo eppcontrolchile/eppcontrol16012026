@@ -35,6 +35,36 @@ export async function middleware(request: NextRequest) {
   const isOnboarding = pathname.startsWith("/onboarding");
   const isAuth = pathname.startsWith("/auth");
 
+  async function isInternalUserComplete() {
+    if (!user) return false;
+
+    // Try by auth_user_id first
+    const { data: byAuth, error: byAuthErr } = await supabase
+      .from("usuarios")
+      .select("id, empresa_id, activo")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+
+    let u: any = byAuth;
+
+    // Fallback by email (invitaciones/recovery)
+    if ((!u?.id || byAuthErr) && user.email) {
+      const email = user.email.trim().toLowerCase();
+      const { data: byEmail } = await supabase
+        .from("usuarios")
+        .select("id, empresa_id, activo")
+        .eq("email", email)
+        .maybeSingle();
+      u = byEmail;
+    }
+
+    if (!u?.id) return false;
+    if (u.activo === false) return false;
+    if (!u.empresa_id) return false;
+
+    return true;
+  }
+
   // 1) Proteger dashboard/onboarding
   if ((isDashboard || isOnboarding) && !user) {
     const url = request.nextUrl.clone();
@@ -43,11 +73,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 2) Evitar que usuarios logueados queden pegados en /auth/login o /auth/register
-  if (user && isAuth && (pathname === "/auth/login" || pathname === "/auth/register")) {
+  // 2) Evitar que usuarios logueados queden pegados en /auth/login
+  if (user && isAuth && pathname === "/auth/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
+  }
+
+  // 3) En /auth/register: solo redirigir si el usuario interno ya está completo.
+  // Si falta (por truncates/invitaciones), dejamos que el registro/onboarding siga.
+  if (user && isAuth && pathname === "/auth/register") {
+    const complete = await isInternalUserComplete();
+    if (complete) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

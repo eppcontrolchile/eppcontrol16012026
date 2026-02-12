@@ -4,12 +4,14 @@
 import Image from "next/image";
 import { useState, useEffect, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function RegisterClient() {
   const searchParams = useSearchParams();
   const planFromUrl = searchParams.get("plan"); // standard | advanced | null
+  const reason = searchParams.get("reason");
+  const router = useRouter();
 
 
   const [loading, setLoading] = useState(false);
@@ -48,6 +50,66 @@ export default function RegisterClient() {
       setForm((prev) => ({ ...prev, plan: planFromUrl }));
     }
   }, [planFromUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const supabase = supabaseBrowser();
+        const { data } = await supabase.auth.getUser();
+        const user = data?.user;
+
+        if (!user || cancelled) return;
+
+        const email = (user.email || "").trim().toLowerCase();
+
+        // Prellenar email si viene desde invitación/recovery
+        if (email) {
+          setForm((prev) => ({ ...prev, email: prev.email || email }));
+        }
+
+        // Si el usuario interno ya existe y está completo, ir a dashboard.
+        // Si falta (por truncates), quedarse en /auth/register para completar onboarding.
+        let usuario: any = null;
+
+        const { data: byAuth } = await supabase
+          .from("usuarios")
+          .select("id, empresa_id, activo")
+          .eq("auth_user_id", user.id)
+          .maybeSingle();
+
+        usuario = byAuth;
+
+        if (!usuario?.id && email) {
+          const { data: byEmail } = await supabase
+            .from("usuarios")
+            .select("id, empresa_id, activo, auth_user_id")
+            .eq("email", email)
+            .maybeSingle();
+
+          usuario = byEmail;
+
+          // Intentar vincular auth_user_id si está vacío
+          if (usuario?.id && !usuario.auth_user_id) {
+            await supabase.from("usuarios").update({ auth_user_id: user.id }).eq("id", usuario.id);
+          }
+        }
+
+        if (usuario?.id && usuario.activo !== false && usuario.empresa_id) {
+          // Navegación completa para evitar estados inconsistentes con cookies
+          window.location.href = "/dashboard";
+          return;
+        }
+      } catch {
+        // Silencioso: si falla, dejamos el formulario visible
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -139,6 +201,20 @@ export default function RegisterClient() {
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-lg p-8 mt-8">
+        {reason ? (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {reason === "missing_usuario" && "Tu usuario fue autenticado, pero falta tu registro interno. Completa el registro para continuar."}
+            {reason === "missing_empresa_id" && "Tu usuario existe, pero falta asociarlo a una empresa. Completa el registro para continuar."}
+            {reason === "missing_empresa" && "Tu empresa no existe o no es accesible. Completa el registro para continuar."}
+            {reason === "missing_usuario_by_email" && "No pudimos resolver tu usuario interno por email. Completa el registro para continuar."}
+            {!([
+              "missing_usuario",
+              "missing_empresa_id",
+              "missing_empresa",
+              "missing_usuario_by_email",
+            ] as const).includes(reason as any) && "Completa el registro para continuar."}
+          </div>
+        ) : null}
         <h1 className="text-2xl font-bold text-center flex items-center justify-center gap-3 -mt-4">
           Crear cuenta en
           <span className="relative top-1 -left-6">
