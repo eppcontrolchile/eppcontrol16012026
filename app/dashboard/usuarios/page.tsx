@@ -1,4 +1,3 @@
-// app/dashboard/usuarios/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,7 +12,44 @@ type UsuarioRow = {
   activo: boolean;
   rol: string | null;
   auth_user_id?: string | null;
+  last_login_at?: string | null;
 };
+
+function roleLabel(role: string | null | undefined) {
+  return (role || "").trim() || "—";
+}
+
+function roleChipClass(role: string) {
+  switch (role) {
+    case "admin":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "supervisor":
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    case "bodega":
+      return "bg-amber-50 text-amber-800 border-amber-200";
+    case "solo_entrega":
+      return "bg-zinc-50 text-zinc-700 border-zinc-200";
+    case "gerencia":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    default:
+      return "bg-zinc-50 text-zinc-700 border-zinc-200";
+  }
+}
+
+function formatLastLogin(s?: string | null) {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+}
 
 export default function UsuariosPage() {
   const supabase = supabaseBrowser();
@@ -22,6 +58,7 @@ export default function UsuariosPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [sendingPw, setSendingPw] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
@@ -33,7 +70,14 @@ export default function UsuariosPage() {
   const [roles, setRoles] = useState<Rol[]>([]);
   const [usuarios, setUsuarios] = useState<UsuarioRow[]>([]);
 
-  const [nuevo, setNuevo] = useState({ nombre: "", email: "", rol: "solo_lectura" });
+  // 🔎 buscador
+  const [q, setQ] = useState("");
+
+  // 🧯 confirmación desactivar
+  const [confirmOff, setConfirmOff] = useState<null | { id: string; nombre: string }>(null);
+
+  // Crear usuario: default seguro (sin solo_lectura)
+  const [nuevo, setNuevo] = useState({ nombre: "", email: "", rol: "bodega" });
 
   const rolesByName = useMemo(() => {
     const m = new Map<string, Rol>();
@@ -82,7 +126,7 @@ export default function UsuariosPage() {
       setMiRol(me.data.rol ?? null);
       setMiUsuarioId(me.data.id);
 
-      // 2) Plan tipo (para habilitar passwords/roles avanzados)
+      // 2) Plan tipo (habilitar passwords/roles avanzados)
       const { data: emp } = await supabase
         .from("empresas")
         .select("plan_tipo")
@@ -102,7 +146,7 @@ export default function UsuariosPage() {
       // 4) Usuarios empresa
       const { data: usuariosData, error: usuariosErr } = await supabase
         .from("usuarios")
-        .select("id,nombre,email,activo,rol,auth_user_id")
+        .select("id,nombre,email,activo,rol,auth_user_id,last_login_at")
         .eq("empresa_id", me.data.empresa_id)
         .order("nombre", { ascending: true });
 
@@ -169,7 +213,7 @@ export default function UsuariosPage() {
 
     if (err) throw err;
 
-    await syncUsuarioRol(u.id, u.rol ?? "solo_lectura");
+    await syncUsuarioRol(u.id, u.rol ?? "bodega");
   }
 
   async function crearUsuario() {
@@ -185,7 +229,6 @@ export default function UsuariosPage() {
     try {
       setCreating(true);
 
-      // Si no es advanced, no creamos usuarios por ahora (regla de producto)
       if (planTipo !== "advanced") {
         throw new Error("Usuarios y roles avanzados: disponible solo en plan Advanced.");
       }
@@ -207,7 +250,7 @@ export default function UsuariosPage() {
       }
 
       setOk("Usuario creado. Se envió correo para crear contraseña.");
-      setNuevo({ nombre: "", email: "", rol: "solo_lectura" });
+      setNuevo({ nombre: "", email: "", rol: "bodega" });
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? "Error creando usuario");
@@ -245,6 +288,18 @@ export default function UsuariosPage() {
     }
   }
 
+  const isAdvanced = planTipo === "advanced";
+
+  const usuariosFiltrados = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return usuarios;
+    return usuarios.filter((u) => {
+      const n = (u.nombre || "").toLowerCase();
+      const e = (u.email || "").toLowerCase();
+      return n.includes(needle) || e.includes(needle);
+    });
+  }, [usuarios, q]);
+
   if (loading) {
     return (
       <div className="rounded-lg border bg-white p-4 text-sm text-zinc-600">
@@ -269,27 +324,42 @@ export default function UsuariosPage() {
     );
   }
 
-  const isAdvanced = planTipo === "advanced";
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Usuarios y roles</h1>
-        <p className="text-sm text-zinc-500">
-          Administra los accesos de tu empresa.
-        </p>
+        <p className="text-sm text-zinc-500">Administra los accesos de tu empresa.</p>
+      </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <label className="text-sm text-zinc-600">Buscar usuario</label>
+        <input
+          className="input mt-1"
+          placeholder="Buscar por nombre o email…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
       </div>
 
       {/* INFO ROLES */}
       <div className="rounded-xl border bg-white p-4 text-sm">
         <p className="font-medium">¿Qué puede hacer cada rol?</p>
-        <ul className="mt-2 list-disc pl-5 text-zinc-600 space-y-1">
-          <li><b>admin</b>: opera todo, ve costos, define usuarios, administra todo.</li>
-          <li><b>supervisor</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.</li>
-          <li><b>bodega</b>: entrega, ingresa EPP, ve stock.</li>
-          <li><b>solo_entrega</b>: solo entrega (ideal móvil / celular).</li>
-          <li><b>solo_lectura</b>: lectura sin edición.</li>
-          <li><b>gerencia</b>: lectura completa (ideal reportes y control).</li>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-zinc-600">
+          <li>
+            <b>admin</b>: opera todo, ve costos, define usuarios, administra todo.
+          </li>
+          <li>
+            <b>supervisor</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.
+          </li>
+          <li>
+            <b>bodega</b>: entrega, ingresa EPP, ve stock.
+          </li>
+          <li>
+            <b>solo_entrega</b>: solo entrega (ideal móvil / celular).
+          </li>
+          <li>
+            <b>gerencia</b>: lectura completa (ideal reportes y control).
+          </li>
         </ul>
 
         {!isAdvanced && (
@@ -300,13 +370,17 @@ export default function UsuariosPage() {
       </div>
 
       {(error || ok) && (
-        <div className={`rounded-lg border p-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-green-200 bg-green-50 text-green-700"}`}>
+        <div
+          className={`rounded-lg border p-3 text-sm ${
+            error ? "border-red-200 bg-red-50 text-red-700" : "border-green-200 bg-green-50 text-green-700"
+          }`}
+        >
           {error ?? ok}
         </div>
       )}
 
       {/* CREAR USUARIO */}
-      <div className="rounded-xl border bg-white p-4 space-y-3">
+      <div className="space-y-3 rounded-xl border bg-white p-4">
         <p className="font-medium">Crear usuario</p>
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
@@ -327,14 +401,16 @@ export default function UsuariosPage() {
             value={nuevo.rol}
             onChange={(e) => setNuevo((p) => ({ ...p, rol: e.target.value }))}
           >
-            {(roles.length ? roles : [
-              { id: "x", nombre: "admin" },
-              { id: "x", nombre: "supervisor" },
-              { id: "x", nombre: "bodega" },
-              { id: "x", nombre: "solo_entrega" },
-              { id: "x", nombre: "solo_lectura" },
-              { id: "x", nombre: "gerencia" },
-            ]).map((r) => (
+            {(roles.length
+              ? roles
+              : [
+                  { id: "x", nombre: "admin" },
+                  { id: "x", nombre: "supervisor" },
+                  { id: "x", nombre: "bodega" },
+                  { id: "x", nombre: "solo_entrega" },
+                  { id: "x", nombre: "gerencia" },
+                ]
+            ).map((r) => (
               <option key={r.nombre} value={r.nombre}>
                 {r.nombre}
               </option>
@@ -359,13 +435,17 @@ export default function UsuariosPage() {
               <th className="p-2 text-left">Nombre</th>
               <th className="p-2 text-left">Email</th>
               <th className="p-2 text-left">Rol</th>
+              <th className="p-2 text-left">Etiqueta</th>
+              <th className="p-2 text-left">Última conexión</th>
               <th className="p-2 text-center">Activo</th>
               <th className="p-2 text-right">Acciones</th>
             </tr>
           </thead>
+
           <tbody>
-            {usuarios.map((u) => {
+            {usuariosFiltrados.map((u) => {
               const isMe = u.id === miUsuarioId;
+              const r = roleLabel(u.rol);
 
               return (
                 <tr key={u.id} className="border-t">
@@ -396,8 +476,8 @@ export default function UsuariosPage() {
                   <td className="p-2">
                     <select
                       className="input"
-                      value={u.rol ?? "solo_lectura"}
-                      disabled={isMe} // no te puedes cambiar rol
+                      value={u.rol ?? "bodega"}
+                      disabled={isMe}
                       onChange={(e) => {
                         const v = e.target.value;
                         setUsuarios((prev) =>
@@ -405,16 +485,18 @@ export default function UsuariosPage() {
                         );
                       }}
                     >
-                      {(roles.length ? roles : [
-                        { id: "x", nombre: "admin" },
-                        { id: "x", nombre: "supervisor" },
-                        { id: "x", nombre: "bodega" },
-                        { id: "x", nombre: "solo_entrega" },
-                        { id: "x", nombre: "solo_lectura" },
-                        { id: "x", nombre: "gerencia" },
-                      ]).map((r) => (
-                        <option key={r.nombre} value={r.nombre}>
-                          {r.nombre}
+                      {(roles.length
+                        ? roles
+                        : [
+                            { id: "x", nombre: "admin" },
+                            { id: "x", nombre: "supervisor" },
+                            { id: "x", nombre: "bodega" },
+                            { id: "x", nombre: "solo_entrega" },
+                            { id: "x", nombre: "gerencia" },
+                          ]
+                      ).map((rr) => (
+                        <option key={rr.nombre} value={rr.nombre}>
+                          {rr.nombre}
                         </option>
                       ))}
                     </select>
@@ -425,15 +507,27 @@ export default function UsuariosPage() {
                     )}
                   </td>
 
+                  <td className="p-2">
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${roleChipClass(r)}`}>
+                      {r}
+                    </span>
+                  </td>
+
+                  <td className="p-2 text-sm text-zinc-600">{formatLastLogin(u.last_login_at)}</td>
+
                   <td className="p-2 text-center">
                     <input
                       type="checkbox"
                       checked={!!u.activo}
-                      disabled={isMe} // no te puedes desactivar
+                      disabled={isMe}
                       onChange={(e) => {
                         const checked = e.target.checked;
+                        if (!checked) {
+                          setConfirmOff({ id: u.id, nombre: u.nombre });
+                          return;
+                        }
                         setUsuarios((prev) =>
-                          prev.map((x) => (x.id === u.id ? { ...x, activo: checked } : x))
+                          prev.map((x) => (x.id === u.id ? { ...x, activo: true } : x))
                         );
                       }}
                     />
@@ -471,9 +565,7 @@ export default function UsuariosPage() {
                     </div>
 
                     {isMe && (
-                      <p className="mt-1 text-xs text-zinc-500 text-right">
-                        (Protegido) No puedes desactivarte.
-                      </p>
+                      <p className="mt-1 text-xs text-zinc-500 text-right">(Protegido) No puedes desactivarte.</p>
                     )}
                   </td>
                 </tr>
@@ -482,6 +574,36 @@ export default function UsuariosPage() {
           </tbody>
         </table>
       </div>
+
+      {confirmOff && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <p className="text-lg font-semibold">Confirmar desactivación</p>
+            <p className="mt-2 text-sm text-zinc-600">
+              Vas a desactivar a <b>{confirmOff.nombre}</b>. Esta persona no podrá ingresar.
+            </p>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-lg border px-3 py-2 text-sm hover:bg-zinc-50"
+                onClick={() => setConfirmOff(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700"
+                onClick={() => {
+                  const id = confirmOff.id;
+                  setUsuarios((prev) => prev.map((x) => (x.id === id ? { ...x, activo: false } : x)));
+                  setConfirmOff(null);
+                }}
+              >
+                Desactivar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

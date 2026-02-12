@@ -52,14 +52,22 @@ export default function LoginPage() {
         password,
       });
 
-      if (error || !data.session) {
-        setError("Correo o contraseña incorrectos.");
-        setPassword("");
-        return;
-      }
+        if (error || !data.session) {
+          setError("Correo o contraseña incorrectos.");
+          setPassword("");
+          return;
+        }
 
-      // ✅ full reload para que el server/layout vea cookies SI o SI
-      window.location.href = next;
+        // 🔔 Non-blocking: registrar última conexión (no bloquea el login)
+        fetch("/api/auth/ping", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }).catch(() => {
+          // ignore
+        });
+
+        // ✅ full reload para que el server/layout vea cookies SI o SI
+        window.location.href = next;
     } catch (err: any) {
       setError(err?.message || "No se pudo iniciar sesión.");
       setPassword("");

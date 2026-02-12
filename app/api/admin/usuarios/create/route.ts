@@ -30,19 +30,30 @@ export async function POST(req: Request) {
     const empresa_id = String(body?.empresa_id || "");
     const nombre = String(body?.nombre || "").trim();
     const email = String(body?.email || "").trim().toLowerCase();
-    const rol = String(body?.rol || "solo_lectura").trim();
+    const rol = String(body?.rol || "solo_entrega").trim();
 
     if (!empresa_id || !nombre || !email) {
       return NextResponse.json({ ok: false, reason: "missing-fields" }, { status: 400 });
     }
 
-    // Auth caller (cookie session)
+    // Auth caller (cookie session) — Next 16: cookies() es async y @supabase/ssr funciona mejor con getAll/setAll
     const cookieStore = await cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
-        cookies: { get: (name: string) => cookieStore.get(name)?.value },
+        cookies: {
+          getAll: () => cookieStore.getAll(),
+          setAll: (cookiesToSet) => {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                cookieStore.set(name, value, options);
+              });
+            } catch {
+              // no-op (en algunos contexts Next bloquea set)
+            }
+          },
+        },
       }
     );
 
@@ -70,6 +81,12 @@ export async function POST(req: Request) {
     if (!emp) return NextResponse.json({ ok: false, reason: "empresa-not-found" }, { status: 404 });
     if (emp.plan_tipo !== "advanced") {
       return NextResponse.json({ ok: true, skipped: true, reason: "plan-not-advanced" });
+    }
+
+    // Defense-in-depth: roles permitidos por producto
+    const allowedRoles = new Set(["admin", "supervisor", "bodega", "solo_entrega", "gerencia"]);
+    if (!allowedRoles.has(rol)) {
+      return NextResponse.json({ ok: false, reason: "rol-not-allowed" }, { status: 400 });
     }
 
     // Admin client (service role)
@@ -118,19 +135,41 @@ export async function POST(req: Request) {
     });
     if (urErr) return NextResponse.json({ ok: false, reason: "usuarios_roles-failed" }, { status: 500 });
 
-    // Invite link -> set-password
-    const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+    // Invite / Recovery link -> set-password (idempotente)
+    // - Nuevo usuario: invite
+    // - Si el email ya existe en Auth: recovery (sirve para reenviar acceso / reset)
+    let actionLink: string | null = null;
+
+    const invite = await admin.auth.admin.generateLink({
       type: "invite",
       email,
       options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
     });
 
-    if (linkErr || !linkData?.properties?.action_link) {
-      return NextResponse.json({ ok: false, reason: "invite-link-failed" }, { status: 500 });
+    const inviteEmailExists = (invite.error as any)?.code === "email_exists";
+
+    if (inviteEmailExists) {
+      const recovery = await admin.auth.admin.generateLink({
+        type: "recovery",
+        email,
+        options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+      });
+
+      if (recovery.error || !recovery.data?.properties?.action_link) {
+        return NextResponse.json({ ok: false, reason: "recovery-link-failed" }, { status: 500 });
+      }
+
+      actionLink = recovery.data.properties.action_link;
+    } else {
+      if (invite.error || !invite.data?.properties?.action_link) {
+        return NextResponse.json({ ok: false, reason: "invite-link-failed" }, { status: 500 });
+      }
+
+      actionLink = invite.data.properties.action_link;
     }
 
-    const actionLink = linkData.properties.action_link;
     const resend = getResend();
+    const link = actionLink!;
 
     await resend.emails.send({
       from: "EPP Control <no-reply@eppcontrol.cl>",
@@ -139,13 +178,13 @@ export async function POST(req: Request) {
       text:
         `Hola ${nombre},\n\n` +
         `Te han creado un acceso en EPP Control para ${emp.nombre}.\n\n` +
-        `Crea tu clave e ingresa desde este enlace:\n${actionLink}\n\n` +
+        `Crea tu clave e ingresa desde este enlace:\n${link}\n\n` +
         `Este es un mensaje automático, por favor no responder.\n` +
         `Equipo de soporte de EPP Control.`,
       html:
         `<p>Hola ${nombre},</p>` +
         `<p>Te han creado un acceso en EPP Control para <b>${emp.nombre}</b>.</p>` +
-        `<p><a href="${actionLink}" target="_blank" rel="noreferrer">Crear clave e ingresar</a></p>` +
+        `<p><a href="${link}" target="_blank" rel="noreferrer">Crear clave e ingresar</a></p>` +
         `<p><em>Este es un mensaje automático, por favor no responder.</em></p>` +
         `<p>Equipo de soporte de EPP Control</p>`,
     });

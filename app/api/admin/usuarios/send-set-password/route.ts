@@ -45,15 +45,47 @@ export async function POST(req: Request) {
     const { data: authData } = await supabase.auth.getUser();
     if (!authData?.user) return NextResponse.json({ ok: false, reason: "not-auth" }, { status: 401 });
 
-    const { data: me } = await supabase
+    const { data: me, error: meErr } = await supabase
       .from("usuarios")
-      .select("empresa_id,rol,activo")
+      .select("id,empresa_id,rol,activo")
       .eq("auth_user_id", authData.user.id)
       .maybeSingle();
 
-    if (!me?.activo) return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
-    if (me.empresa_id !== empresa_id) return NextResponse.json({ ok: false, reason: "empresa-mismatch" }, { status: 403 });
-    if (me.rol !== "admin") return NextResponse.json({ ok: false, reason: "forbidden" }, { status: 403 });
+    if (meErr || !me) {
+      return NextResponse.json({ ok: false, reason: "no-usuario-interno" }, { status: 403 });
+    }
+
+    if (me.activo !== true) {
+      return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
+    }
+
+    if (me.empresa_id !== empresa_id) {
+      return NextResponse.json({ ok: false, reason: "empresa-mismatch" }, { status: 403 });
+    }
+
+    if (me.rol !== "admin") {
+      return NextResponse.json({ ok: false, reason: "forbidden" }, { status: 403 });
+    }
+
+    // target must exist in the same empresa (avoid sending links to arbitrary emails)
+    const { data: target, error: targetErr } = await supabase
+      .from("usuarios")
+      .select("id,email,activo")
+      .eq("empresa_id", empresa_id)
+      .eq("email", email)
+      .maybeSingle();
+
+    if (targetErr) {
+      return NextResponse.json({ ok: false, reason: "target-lookup-failed" }, { status: 500 });
+    }
+
+    if (!target) {
+      return NextResponse.json({ ok: false, reason: "target-not-found-in-empresa" }, { status: 404 });
+    }
+
+    if (target.activo !== true) {
+      return NextResponse.json({ ok: false, reason: "target-inactive" }, { status: 403 });
+    }
 
     const { data: emp } = await supabase
       .from("empresas")
@@ -71,13 +103,13 @@ export async function POST(req: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    // Si el email no existe en Auth, igual no “rompemos”: mandamos al login (y el admin puede reenviar cuando el usuario exista en Auth).
     const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
       type: "recovery",
       email,
       options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
     });
 
-    // Si el email no existe en Auth, igual no “rompemos”: enviamos aviso.
     const noUser = (linkErr as any)?.code === "user_not_found";
 
     const actionLink = !noUser && linkData?.properties?.action_link
