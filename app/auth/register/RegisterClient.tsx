@@ -10,11 +10,12 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 export default function RegisterClient() {
   const searchParams = useSearchParams();
   const planFromUrl = searchParams.get("plan"); // standard | advanced | null
-  const reason = searchParams.get("reason");
+  const reason = searchParams.get("reason") || "";
   const router = useRouter();
 
-
   const [loading, setLoading] = useState(false);
+  const [fixingInvite, setFixingInvite] = useState(false);
+  const [inviteFixError, setInviteFixError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     companyName: "",
@@ -52,7 +53,55 @@ export default function RegisterClient() {
   }, [planFromUrl]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (reason !== "missing_usuario") return;
+
+    let mounted = true;
+
+    (async () => {
+      try {
+        setFixingInvite(true);
+        setInviteFixError(null);
+
+        // Asegurar sesión fresca (por si venimos de set-password)
+        await supabaseBrowser().auth.refreshSession().catch(() => null);
+
+        // Link interno por server (service role) y luego redirigir
+        const r = await fetch("/api/auth/ping", { method: "POST" });
+        if (!mounted) return;
+
+        if (!r.ok) {
+          setInviteFixError(
+            "No se pudo completar tu acceso automáticamente. Cierra sesión e ingresa nuevamente desde el enlace de invitación."
+          );
+          return;
+        }
+
+        window.location.href = "/dashboard";
+      } catch {
+        if (!mounted) return;
+        setInviteFixError(
+          "No se pudo completar tu acceso automáticamente. Cierra sesión e ingresa nuevamente."
+        );
+      } finally {
+        if (!mounted) return;
+        setFixingInvite(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [reason]);
+
+  useEffect(() => {
     let cancelled = false;
+
+    if (reason === "missing_usuario") {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     (async () => {
       try {
@@ -109,7 +158,7 @@ export default function RegisterClient() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [reason, router]);
 
   const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -197,6 +246,35 @@ export default function RegisterClient() {
       setLoading(false);
     }
   };
+
+  if (reason === "missing_usuario") {
+    return (
+      <main className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
+        <div className="w-full max-w-xl bg-white rounded-2xl shadow-lg p-8 mt-8">
+          <h1 className="text-xl font-bold text-center">Completando tu acceso…</h1>
+          <p className="mt-3 text-sm text-zinc-600 text-center">
+            Estás ingresando por invitación. No necesitas crear empresa.
+          </p>
+
+          {inviteFixError ? (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 text-sm">
+              {inviteFixError}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border bg-white p-3 text-sm text-zinc-600">
+              {fixingInvite ? "Verificando y enlazando tu usuario…" : "Redirigiendo…"}
+            </div>
+          )}
+
+          <div className="mt-6 flex justify-center">
+            <a href="/auth/login" className="text-sky-700 underline text-sm">
+              Ir a iniciar sesión
+            </a>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center px-6">

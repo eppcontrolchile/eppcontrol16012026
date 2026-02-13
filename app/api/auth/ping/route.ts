@@ -16,8 +16,15 @@ export async function POST() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
+          getAll: () => cookieStore.getAll(),
+          setAll: (cookiesToSet) => {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                cookieStore.set(name, value, options);
+              });
+            } catch {
+              // no-op: in some Next contexts cookies can't be mutated
+            }
           },
         },
       }
@@ -31,6 +38,10 @@ export async function POST() {
     const authUserId = au.user.id;
     const authEmail = (au.user.email || "").toLowerCase();
 
+    if (!authEmail) {
+      return NextResponse.json({ ok: false, reason: "missing-email" }, { status: 400 });
+    }
+
     // 2) Usar service role para actualizar last_login_at sin pelear con RLS
     const admin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -39,19 +50,23 @@ export async function POST() {
 
     // Preferencia: match por auth_user_id; fallback por email
     let usuarioId: string | null = null;
+    let empresaId: string | null = null;
+    let activo: boolean | null = null;
 
     const byAuth = await admin
       .from("usuarios")
-      .select("id")
+      .select("id, empresa_id, activo")
       .eq("auth_user_id", authUserId)
       .maybeSingle();
 
     if (byAuth.data?.id) {
       usuarioId = byAuth.data.id;
+      empresaId = (byAuth.data as any).empresa_id ?? null;
+      activo = (byAuth.data as any).activo ?? null;
     } else if (authEmail) {
       const byEmail = await admin
         .from("usuarios")
-        .select("id, auth_user_id")
+        .select("id, auth_user_id, empresa_id, activo")
         .eq("email", authEmail)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -59,6 +74,8 @@ export async function POST() {
 
       if (byEmail.data?.id) {
         usuarioId = byEmail.data.id;
+        empresaId = (byEmail.data as any).empresa_id ?? null;
+        activo = (byEmail.data as any).activo ?? null;
 
         // Linkear auth_user_id si está vacío (muy importante)
         if (!byEmail.data.auth_user_id) {
@@ -71,8 +88,15 @@ export async function POST() {
     }
 
     if (!usuarioId) {
-      // No rompemos login por esto: simplemente no hay fila interna
-      return NextResponse.json({ ok: true, skipped: true, reason: "no-usuario-interno" });
+      return NextResponse.json({ ok: false, reason: "missing_usuario" }, { status: 400 });
+    }
+
+    if (activo === false) {
+      return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
+    }
+
+    if (!empresaId) {
+      return NextResponse.json({ ok: false, reason: "missing_empresa" }, { status: 400 });
     }
 
     const { error: upErr } = await admin
@@ -84,7 +108,7 @@ export async function POST() {
       return NextResponse.json({ ok: false, reason: "update-failed" }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, usuario_id: usuarioId, empresa_id: empresaId });
   } catch (e: any) {
     return NextResponse.json({ ok: false, reason: e?.message ?? "unknown-error" }, { status: 500 });
   }
