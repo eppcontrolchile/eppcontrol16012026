@@ -151,7 +151,14 @@ export default function SetPasswordPage() {
 
       setOkMsg("Contraseña actualizada. Entrando…");
       // Puedes mandar al dashboard directo o al login
-      router.replace("/dashboard");
+      // Respeta ?next=/ruta para volver al flujo correcto
+      const params = new URLSearchParams(
+        typeof window !== "undefined" ? window.location.search : ""
+      );
+      const rawNext = params.get("next") || "/dashboard";
+      const next = rawNext.startsWith("/") ? rawNext : "/dashboard";
+
+      router.replace(next);
     } catch (e: any) {
       setError(e?.message ?? "Error actualizando contraseña");
     } finally {

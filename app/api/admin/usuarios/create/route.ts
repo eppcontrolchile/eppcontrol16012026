@@ -153,20 +153,20 @@ export async function POST(req: Request) {
     // - Si el email ya existe en Auth: recovery (sirve para reenviar acceso / reset)
     let actionLink: string | null = null;
 
-    const invite = await admin.auth.admin.generateLink({
-      type: "invite",
-      email,
-      options: { redirectTo: buildAuthRedirect("/auth/set-password") },
-    });
+      const invite = await admin.auth.admin.generateLink({
+        type: "invite",
+        email,
+        options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+      });
 
     const inviteEmailExists = (invite.error as any)?.code === "email_exists";
 
     if (inviteEmailExists) {
-      const recovery = await admin.auth.admin.generateLink({
-        type: "recovery",
-        email,
-        options: { redirectTo: buildAuthRedirect("/auth/set-password") },
-      });
+        const recovery = await admin.auth.admin.generateLink({
+          type: "recovery",
+          email,
+          options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+        });
 
       if (recovery.error || !recovery.data?.properties?.action_link) {
         return NextResponse.json({ ok: false, reason: "recovery-link-failed" }, { status: 500 });

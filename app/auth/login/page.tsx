@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 function getAppBaseUrl(): string {
@@ -29,6 +29,27 @@ export default function LoginPage() {
   const [resetSent, setResetSent] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // Si llega desde link de invite/recovery, Supabase puede poner tokens en el hash.
+    // Mandamos a set-password, que sabe procesar ?code= y #access_token=
+    const hash = window.location.hash || "";
+    const hasAccessToken = hash.includes("access_token=");
+    const hasInviteOrRecovery =
+      hash.includes("type=invite") || hash.includes("type=recovery");
+
+    if (hasAccessToken || hasInviteOrRecovery) {
+      const nextFromQuery = new URLSearchParams(window.location.search).get("next");
+      const next = nextFromQuery && nextFromQuery.startsWith("/")
+        ? nextFromQuery
+        : "/dashboard";
+
+      const to = `/auth/set-password?next=${encodeURIComponent(next)}`;
+      window.location.replace(to + hash);
+    }
+  }, []);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();

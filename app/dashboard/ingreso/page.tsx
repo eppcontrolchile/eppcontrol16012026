@@ -3,7 +3,30 @@
 
 import * as XLSX from "xlsx";
 import { useEffect, useState } from "react";
+
 import { useRouter } from "next/navigation";
+
+// Helpers para parsear fechas correctamente como LOCAL (YYYY-MM-DD)
+function parseDateFlexible(input: string): Date {
+  const s = (input || "").toString().trim();
+  // Si viene como YYYY-MM-DD, parsear como fecha LOCAL para evitar desfase por UTC
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    return new Date(y, mo - 1, d);
+  }
+  // Fallback: Date() estándar (para timestamps u otros formatos)
+  return new Date(s);
+}
+
+function formatFechaCL(input?: string | null): string {
+  if (!input) return "—";
+  const dt = parseDateFlexible(input);
+  if (Number.isNaN(dt.getTime())) return "—";
+  return dt.toLocaleDateString("es-CL");
+}
 
 
 type IngresoItem = {
@@ -101,8 +124,8 @@ useEffect(() => {
         };
       });
 
-      // Ordenar por fecha descendente (fallback: created_at no viene en UI)
-      data.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      // Ordenar por fecha descendente (parse local para YYYY-MM-DD)
+      data.sort((a, b) => parseDateFlexible(b.fecha).getTime() - parseDateFlexible(a.fecha).getTime());
       setPagina(1);
       setHistorial(data);
     } catch (err) {
@@ -456,7 +479,7 @@ const refrescarHistorial = async () => {
       };
     });
 
-    data.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+    data.sort((a, b) => parseDateFlexible(b.fecha).getTime() - parseDateFlexible(a.fecha).getTime());
     setPagina(1);
     setHistorial(data);
   } catch {
@@ -778,7 +801,7 @@ return (
               className="border border-slate-300 hover:bg-zinc-50"
             >
               <td className="p-2 border border-slate-300">
-                {new Date(row.fecha).toLocaleDateString()}
+                {formatFechaCL(row.fecha)}
               </td>
               <td className="p-2 border border-slate-300">
                 {row.categoria}
