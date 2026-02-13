@@ -23,6 +23,21 @@ type DashboardMetrics = {
   trabajador_top_mes?: string | null;
 };
 
+function formatDateTimeCL(input?: string | null) {
+  if (!input) return "—";
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return input;
+  return new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [planUsage, setPlanUsage] = useState<PlanUsage | null>(null);
@@ -40,7 +55,9 @@ export default function DashboardPage() {
   useEffect(() => {
     const loadDashboard = async () => {
       try {
-        const res = await fetch("/api/plan-usage");
+        const res = await fetch("/api/plan-usage", {
+          cache: "no-store",
+        });
         if (res.ok) {
           const data = (await res.json().catch(() => null)) as PlanUsage | null;
           if (
@@ -54,25 +71,44 @@ export default function DashboardPage() {
           } else {
             setPlanUsage(null);
           }
+        } else {
+          setPlanUsage(null);
         }
       } catch {
         setPlanUsage(null);
       }
 
       try {
-        const resMetrics = await fetch("/api/dashboard-metrics");
+        const resMetrics = await fetch("/api/dashboard-metrics", {
+          cache: "no-store",
+        });
         if (resMetrics.ok) {
           const data = (await resMetrics.json().catch(() => ({}))) as DashboardMetrics;
 
-          setStockTotal(data.stock_total ?? 0);
-          setStockCriticoCount(data.stock_critico ?? 0);
-          setEgresosHoy(data.egresos_hoy ?? 0);
+          const n = (v: any) => {
+            const x = typeof v === "string" ? Number(v) : (v as number);
+            return Number.isFinite(x) ? x : 0;
+          };
 
-          setGastoMes(data.gasto_mes_actual ?? 0);
-          setUltimoIngreso(data.ultimo_ingreso ?? null);
-          setUltimoEgreso(data.ultimo_egreso ?? null);
-          setCentroTop(data.centro_top_mes ?? null);
-          setTrabajadorTop(data.trabajador_top_mes ?? null);
+          setStockTotal(n((data as any).stock_total));
+          setStockCriticoCount(n((data as any).stock_critico));
+          setEgresosHoy(n((data as any).egresos_hoy));
+          setGastoMes(n((data as any).gasto_mes_actual));
+
+          setUltimoIngreso(typeof (data as any).ultimo_ingreso === "string" ? (data as any).ultimo_ingreso : null);
+          setUltimoEgreso(typeof (data as any).ultimo_egreso === "string" ? (data as any).ultimo_egreso : null);
+          setCentroTop(typeof (data as any).centro_top_mes === "string" ? (data as any).centro_top_mes : null);
+          setTrabajadorTop(typeof (data as any).trabajador_top_mes === "string" ? (data as any).trabajador_top_mes : null);
+        } else {
+          // Si falla la API, resetea a valores seguros
+          setStockTotal(0);
+          setStockCriticoCount(0);
+          setEgresosHoy(0);
+          setGastoMes(0);
+          setUltimoIngreso(null);
+          setUltimoEgreso(null);
+          setCentroTop(null);
+          setTrabajadorTop(null);
         }
       } catch {
         // keep defaults
@@ -128,8 +164,8 @@ export default function DashboardPage() {
 
       {/* ACTIVIDAD + DESTACADOS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card title="Último ingreso" value={ultimoIngreso ?? "—"} href="/dashboard/ingreso" />
-        <Card title="Último egreso" value={ultimoEgreso ?? "—"} href="/dashboard/entregas" />
+        <Card title="Último ingreso" value={formatDateTimeCL(ultimoIngreso)} href="/dashboard/ingreso" />
+        <Card title="Último egreso" value={formatDateTimeCL(ultimoEgreso)} href="/dashboard/entregas" />
         <Card title="Centro con mayor gasto (mes)" value={centroTop ?? "—"} href="/dashboard/gastos" />
         <Card title="Trabajador con mayor gasto (mes)" value={trabajadorTop ?? "—"} href="/dashboard/gastos" />
       </div>
