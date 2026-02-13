@@ -24,6 +24,13 @@ function getAppBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+function buildAuthRedirect(nextPath: string) {
+  const base = getAppBaseUrl();
+  const next = nextPath.startsWith("/") ? nextPath : "/" + nextPath;
+  const q = new URLSearchParams({ next }).toString();
+  return `${base}/auth/callback?${q}`;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -106,7 +113,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, reason: "rol-not-found" }, { status: 400 });
     }
 
-    // Evitar duplicado interno por email
+    // Crear/actualizar usuario interno por email (idempotente)
     const { data: existing } = await admin
       .from("usuarios")
       .select("id")
@@ -114,23 +121,29 @@ export async function POST(req: Request) {
       .eq("email", email)
       .maybeSingle();
 
-    if (existing?.id) {
-      return NextResponse.json({ ok: false, reason: "usuario-email-exists" }, { status: 409 });
+    let usuarioId: string | null = existing?.id ?? null;
+
+    if (!usuarioId) {
+      const { data: ins } = await admin
+        .from("usuarios")
+        .insert({ empresa_id, nombre, email, activo: true, rol })
+        .select("id")
+        .single();
+
+      if (!ins?.id) return NextResponse.json({ ok: false, reason: "usuarios-insert-failed" }, { status: 500 });
+      usuarioId = ins.id;
+    } else {
+      // Si ya existía, lo mantenemos activo y actualizamos nombre/rol (último gana)
+      await admin
+        .from("usuarios")
+        .update({ nombre, activo: true, rol })
+        .eq("id", usuarioId);
     }
 
-    // Insert usuario interno
-    const { data: ins } = await admin
-      .from("usuarios")
-      .insert({ empresa_id, nombre, email, activo: true, rol })
-      .select("id")
-      .single();
-
-    if (!ins?.id) return NextResponse.json({ ok: false, reason: "usuarios-insert-failed" }, { status: 500 });
-
     // usuarios_roles (1 rol)
-    await admin.from("usuarios_roles").delete().eq("usuario_id", ins.id);
+    await admin.from("usuarios_roles").delete().eq("usuario_id", usuarioId);
     const { error: urErr } = await admin.from("usuarios_roles").insert({
-      usuario_id: ins.id,
+      usuario_id: usuarioId,
       rol_id: rolRow.id,
     });
     if (urErr) return NextResponse.json({ ok: false, reason: "usuarios_roles-failed" }, { status: 500 });
@@ -143,7 +156,7 @@ export async function POST(req: Request) {
     const invite = await admin.auth.admin.generateLink({
       type: "invite",
       email,
-      options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+      options: { redirectTo: buildAuthRedirect("/auth/set-password") },
     });
 
     const inviteEmailExists = (invite.error as any)?.code === "email_exists";
@@ -152,7 +165,7 @@ export async function POST(req: Request) {
       const recovery = await admin.auth.admin.generateLink({
         type: "recovery",
         email,
-        options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+        options: { redirectTo: buildAuthRedirect("/auth/set-password") },
       });
 
       if (recovery.error || !recovery.data?.properties?.action_link) {
@@ -189,7 +202,7 @@ export async function POST(req: Request) {
         `<p>Equipo de soporte de EPP Control</p>`,
     });
 
-    return NextResponse.json({ ok: true, created: true, usuario_id: ins.id });
+    return NextResponse.json({ ok: true, created: true, usuario_id: usuarioId });
   } catch (e: any) {
     console.error("ADMIN CREATE USER ERROR:", e);
     return NextResponse.json({ ok: false, reason: e?.message ?? "unknown" }, { status: 500 });
