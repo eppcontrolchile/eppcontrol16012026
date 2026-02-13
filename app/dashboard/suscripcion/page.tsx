@@ -21,48 +21,71 @@ type Suscripcion = {
   pagos: Pago[];
 };
 
-function getSuscripcion(): Suscripcion {
-  const fallback: Suscripcion = {
-    plan: "STANDARD",
-    tramo: "25",
-    estado: "Trial",
-    valorPlan: 29990,
-    trabajadoresActivos: 0,
-    limiteTrabajadores: 25,
-    proximoPago: null,
-    pagos: [],
-  };
-
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-
-  const raw = localStorage.getItem("suscripcion");
-
-  if (!raw) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(raw) as Suscripcion;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveSuscripcion(data: Suscripcion) {
-  localStorage.setItem("suscripcion", JSON.stringify(data));
-}
 
 export default function SuscripcionPage() {
-  const [suscripcion, setSuscripcion] =
-    useState<Suscripcion | null>(null);
+  const [suscripcion, setSuscripcion] = useState<Suscripcion | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSuscripcion(getSuscripcion());
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const res = await fetch("/api/suscripcion", { cache: "no-store" });
+        const body = await res.json().catch(() => null);
+
+        if (!alive) return;
+
+        if (!res.ok) {
+          setError(body?.error || "No se pudo cargar la suscripción");
+          setSuscripcion(null);
+          return;
+        }
+
+        setSuscripcion(body as Suscripcion);
+      } catch {
+        if (!alive) return;
+        setError("No se pudo cargar la suscripción");
+        setSuscripcion(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  if (!suscripcion) return null;
+  if (loading) {
+    return <div className="p-6 text-sm text-zinc-600">Cargando suscripción...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <h1 className="text-xl font-semibold">Suscripción</h1>
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!suscripcion) {
+    return (
+      <div className="p-6">
+        <h1 className="text-xl font-semibold">Suscripción</h1>
+        <div className="mt-4 rounded-lg border p-3 text-sm text-zinc-600">
+          No hay datos de suscripción disponibles.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

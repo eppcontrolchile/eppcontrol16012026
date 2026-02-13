@@ -113,6 +113,34 @@ export default function DashboardShell({
 
   const [logoSrc, setLogoSrc] = useState<string>(initialLogoSrc);
   const [lastLoginAt, setLastLoginAt] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const clearClientSessionArtifacts = () => {
+    try {
+      // Remove known app cache keys
+      localStorage.removeItem("suscripcion");
+
+      // Remove Supabase auth keys (project-ref varies, so we match prefixes)
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith("sb-") || k.includes("supabase") || k.includes("auth-token")) {
+          localStorage.removeItem(k);
+        }
+      }
+
+      // Session storage can also hold transient state
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith("sb-") || k.includes("supabase") || k.includes("auth-token")) {
+          sessionStorage.removeItem(k);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     setLogoSrc(initialLogoSrc);
@@ -142,9 +170,15 @@ export default function DashboardShell({
   }, []);
 
   const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+
     try {
       await supabaseBrowser().auth.signOut();
+    } catch {
+      // Even if signOut fails, we still clear client artifacts and hard redirect.
     } finally {
+      clearClientSessionArtifacts();
       // hard redirect so server/layout always sees cleared cookies
       window.location.href = "/auth/login";
     }
@@ -391,9 +425,10 @@ export default function DashboardShell({
         <div className="mt-10">
           <button
             onClick={handleLogout}
-            className="text-sm text-zinc-600 hover:text-zinc-900"
+            disabled={loggingOut}
+            className="text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50"
           >
-            Cerrar sesión
+            {loggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
           </button>
         </div>
       </aside>

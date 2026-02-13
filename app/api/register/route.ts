@@ -37,14 +37,14 @@ export async function POST(req: Request) {
     const plan = formData.get("plan") as string;
     const firstName = formData.get("firstName") as string;
     const lastName = formData.get("lastName") as string;
-    const email = formData.get("email") as string;
+    const emailRaw = formData.get("email") as string;
+    const email = (emailRaw || "").trim().toLowerCase();
     const password = formData.get("password") as string;
     const logoFile = formData.get("companyLogo") as File | null;
 
     if (
       !companyName ||
       !companyRut ||
-      !companySize ||
       !plan ||
       !firstName ||
       !lastName ||
@@ -102,12 +102,13 @@ export async function POST(req: Request) {
     /* ============================
        2️⃣ EMPRESA
        ============================ */
+    const size = (companySize || "").trim();
     const limite =
-      companySize === "25"
+      size === "25"
         ? 25
-        : companySize === "50"
+        : size === "50"
         ? 50
-        : companySize === "100"
+        : size === "100"
         ? 100
         : 9999;
 
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
 
     if (empresaError || !empresa) {
       return NextResponse.json(
-        { error: "Error creando empresa" },
+        { error: empresaError?.message || "Error creando empresa" },
         { status: 400 }
       );
     }
@@ -182,7 +183,7 @@ export async function POST(req: Request) {
 
     if (usuarioError || !usuario) {
       return NextResponse.json(
-        { error: "Error creando usuario interno" },
+        { error: usuarioError?.message || "Error creando usuario interno" },
         { status: 400 }
       );
     }
