@@ -122,7 +122,7 @@ export default async function DashboardLayout({
   }
 
   if (usuario.activo === false) {
-    return redirect("/auth/login?reason=inactive");
+    redirect("/auth/bloqueado");
   }
 
   if (!usuario.empresa_id) {
