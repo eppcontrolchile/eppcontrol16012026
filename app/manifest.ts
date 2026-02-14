@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "EPP Entregas",
     short_name: "Entregas",
     description: "App operativa para registrar entregas de EPP.",
-    start_url: "/m/entrega",
-    scope: "/",
+    start_url: "/m",        // 👈 público
+    scope: "/m/",           // 👈 que quede “encerrada” en /m
     display: "standalone",
     background_color: "#ffffff",
     theme_color: "#0ea5e9",
