@@ -51,7 +51,7 @@ export default function LandingPage() {
           personal de tu empresa de forma simple y segura.
         </p>
 
-        <div className="mt-8 flex justify-center gap-4">
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
           <Link
             href="/auth/register"
             className="rounded-xl bg-sky-600 px-6 py-3 text-white font-medium hover:bg-sky-700 transition"
@@ -65,7 +65,18 @@ export default function LandingPage() {
           >
             Ya tengo cuenta
           </Link>
+
+          <Link
+            href="/m/entrega"
+            className="rounded-xl border border-sky-200 bg-white px-6 py-3 font-medium text-sky-700 hover:bg-sky-50 transition"
+          >
+            📲 Instalar App de Entregas
+          </Link>
         </div>
+
+        <p className="mt-3 text-xs text-zinc-500">
+          En iPhone: abre en Safari → Compartir → “Agregar a pantalla de inicio”. En Android: Chrome mostrará “Instalar”.
+        </p>
       </section>
 
       {/* BENEFICIOS */}
@@ -148,8 +159,8 @@ export default function LandingPage() {
       <div className="rounded-2xl bg-white p-8 shadow-md flex flex-col border-2 border-sky-600">
         <div className="flex items-center justify-center gap-2 mb-2">
           <h3 className="font-semibold text-xl">Plan Avanzado</h3>
-          <span className="text-xs rounded-full bg-zinc-200 px-3 py-1 text-zinc-700">
-            Próximamente
+          <span className="text-xs rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">
+            Disponible
           </span>
         </div>
         <p className="mb-4 text-sm text-zinc-500">
@@ -168,12 +179,12 @@ export default function LandingPage() {
           Precio según cantidad de trabajadores activos.
         </p>
 
-        <button
-          disabled
-          className="mt-auto rounded-lg bg-zinc-300 px-4 py-2 text-zinc-600 font-medium cursor-not-allowed"
+        <Link
+          href="/auth/register?plan=advanced"
+          className="mt-auto rounded-lg bg-sky-600 px-4 py-2 text-white font-medium hover:bg-sky-700 transition"
         >
-          Disponible próximamente
-        </button>
+          Probar Plan Avanzado
+        </Link>
       </div>
 
     </div>
