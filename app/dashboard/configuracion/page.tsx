@@ -1,359 +1,284 @@
 // app/dashboard/configuracion/page.tsx
 "use client";
 
-
 import { useEffect, useState } from "react";
 
-function validarRutChileno(rut: string): boolean {
-  const limpio = rut.replace(/\./g, "").replace("-", "").toUpperCase();
+type EmpresaConfig = {
+  id: string;
+  nombre: string;
+  rut: string;
+  plan_tipo: "standard" | "advanced";
+  logo_url: string | null;
 
-  if (!/^\d{7,8}[0-9K]$/.test(limpio)) return false;
+  email_alertas: string | null;
+  alertas_activas: boolean | null;
+  stock_critico_activo: boolean | null;
+  frecuencia_alertas: "diaria" | "semanal" | null;
 
-  const cuerpo = limpio.slice(0, -1);
-  const dv = limpio.slice(-1);
+  email_gerencia: string | null;
+};
 
-  let suma = 0;
-  let multiplicador = 2;
-
-  for (let i = cuerpo.length - 1; i >= 0; i--) {
-    suma += parseInt(cuerpo[i]) * multiplicador;
-    multiplicador = multiplicador === 7 ? 2 : multiplicador + 1;
-  }
-
-  const resto = suma % 11;
-  const dvEsperado =
-    resto === 1 ? "K" : resto === 0 ? "0" : String(11 - resto);
-
-  return dv === dvEsperado;
+function isEmail(v: string) {
+  const s = (v || "").trim();
+  return !s || (s.includes("@") && s.includes("."));
 }
 
 export default function ConfiguracionEmpresaPage() {
-  const [companyName, setCompanyName] = useState("");
-  const [logoUrl, setLogoUrl] = useState("");
-  const [stockCritico, setStockCritico] = useState("5");
-  const [companyRut, setCompanyRut] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
+  const [empresa, setEmpresa] = useState<EmpresaConfig | null>(null);
+  const [error, setError] = useState<string>("");
+
+  // form state
+  const [logoUrl, setLogoUrl] = useState("");
+  const [alertasActivas, setAlertasActivas] = useState(false);
+  const [stockCriticoActivo, setStockCriticoActivo] = useState(true);
+  const [frecuencia, setFrecuencia] = useState<"diaria" | "semanal">("diaria");
+  const [correoAlertas, setCorreoAlertas] = useState("");
   const [correoGerencia, setCorreoGerencia] = useState("");
 
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  const [usarStockCritico, setUsarStockCritico] = useState(true);
-  const [alertasCorreo, setAlertasCorreo] = useState(false);
-  const [frecuenciaAlertas, setFrecuenciaAlertas] = useState("diaria");
-  const [correoAlertas, setCorreoAlertas] = useState("");
-
-  const [plan, setPlan] = useState<string | null>(null);
+  const planLabel = empresa?.plan_tipo === "advanced" ? "Plan Avanzado" : "Plan Estándar";
 
   useEffect(() => {
-    setCompanyName(localStorage.getItem("companyName") || "");
-    setCompanyRut(localStorage.getItem("companyRut") || "");
-    setLogoUrl(localStorage.getItem("companyLogo") || "");
-    setStockCritico(localStorage.getItem("stockCritico") || "5");
-    setAdminEmail(localStorage.getItem("adminEmail") || "");
-    const admin = localStorage.getItem("adminEmail") || "";
-    if (!correoAlertas) {
-      setCorreoAlertas(admin);
-    }
-    setCorreoGerencia(
-      localStorage.getItem("companyManagerEmail") || ""
-    );
+    let cancelled = false;
 
-    const companyConfig = localStorage.getItem("companyConfig");
-    if (companyConfig) {
-      const parsed = JSON.parse(companyConfig);
-      setUsarStockCritico(parsed.stockCritico ?? true);
-      setAlertasCorreo(parsed.alertasCorreo ?? false);
-      setFrecuenciaAlertas(parsed.frecuencia ?? "diaria");
-      setCorreoAlertas(parsed.correoAlertas ?? "");
+    async function load() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const res = await fetch("/api/empresa/config", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(json?.error || "No se pudo cargar configuración");
+        }
+
+        const e: EmpresaConfig = json.empresa;
+
+        if (cancelled) return;
+
+        setEmpresa(e);
+        setLogoUrl(e.logo_url ?? "");
+        setAlertasActivas(Boolean(e.alertas_activas));
+        setStockCriticoActivo(Boolean(e.stock_critico_activo));
+        setFrecuencia((e.frecuencia_alertas as any) || "diaria");
+        setCorreoAlertas(e.email_alertas ?? "");
+        setCorreoGerencia(e.email_gerencia ?? "");
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message ?? "Error");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
 
-    const savedPlan = localStorage.getItem("plan");
-    setPlan(savedPlan);
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  async function onSave(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
-    if (!adminEmail.includes("@")) {
-      setError("Correo administrador no válido");
+    if (!isEmail(correoAlertas)) {
+      setError("Correo de alertas no válido");
       return;
     }
 
-    if (!companyRut.trim()) {
-      setError("El RUT de la empresa es obligatorio");
-      return;
-    }
-
-    if (!validarRutChileno(companyRut)) {
-      setError("El RUT ingresado no es válido");
-      return;
-    }
-
-    if (adminPassword && adminPassword.length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres");
-      return;
-    }
-
-    if (!correoGerencia.includes("@")) {
+    if (empresa?.plan_tipo === "standard" && !isEmail(correoGerencia)) {
       setError("Correo de gerencia no válido");
       return;
     }
 
-    if (correoGerencia === adminEmail) {
-      setError(
-        "El correo de gerencia no puede ser el mismo correo administrador"
-      );
-      return;
+    try {
+      setSaving(true);
+
+      const payload: any = {
+        logo_url: logoUrl.trim() || null,
+        email_alertas: correoAlertas.trim() || null,
+        alertas_activas: alertasActivas,
+        stock_critico_activo: stockCriticoActivo,
+        frecuencia_alertas: frecuencia,
+      };
+
+      // regla: solo standard puede editar email_gerencia
+      if (empresa?.plan_tipo === "standard") {
+        payload.email_gerencia = correoGerencia.trim() || null;
+      }
+
+      const res = await fetch("/api/empresa/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "No se pudo guardar");
+      }
+
+      setEmpresa(json.empresa);
+    } catch (err: any) {
+      setError(err?.message ?? "Error guardando");
+    } finally {
+      setSaving(false);
     }
+  }
 
-    localStorage.setItem("companyName", companyName);
-    localStorage.setItem("companyRut", companyRut);
-    localStorage.setItem("companyLogo", logoUrl);
-    localStorage.setItem("stockCritico", stockCritico);
-    localStorage.setItem("adminEmail", adminEmail);
-    localStorage.setItem(
-      "companyManagerEmail",
-      correoGerencia
+  if (loading) return <div className="text-zinc-500">Cargando configuración…</div>;
+
+  if (error && !empresa) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        {error}
+      </div>
     );
+  }
 
-    if (adminPassword) {
-      localStorage.setItem("adminPassword", adminPassword);
-    }
-
-    localStorage.setItem(
-      "companyConfig",
-      JSON.stringify({
-        stockCritico: usarStockCritico,
-        alertasCorreo,
-        frecuencia: frecuenciaAlertas,
-        correoAlertas,
-      })
-    );
-
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  if (!empresa) {
+    return <div className="text-zinc-500">No disponible</div>;
+  }
 
   return (
-    <div className="max-w-xl space-y-6">
-      <h1 className="text-2xl font-semibold">
-        Configuración de la empresa
-      </h1>
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Configuración</h1>
+        <p className="text-sm text-zinc-500">
+          Administra parámetros que definiste en el onboarding. Solo disponible para Admin.
+        </p>
+      </div>
 
-      {plan && (
-        <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
-          <strong>Plan contratado:</strong>{" "}
-          {plan === "advanced" ? "Plan Avanzado" : "Plan Estándar"} ·{" "}
-          <span className="text-sky-700">
-            Prueba gratuita activa (7 días)
-          </span>
+      <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        <strong>{planLabel}</strong>
+        <div className="mt-1 text-sky-800">
+          Empresa: {empresa.nombre} · RUT: {empresa.rut}
         </div>
-      )}
+      </div>
 
-      <form onSubmit={handleSave} className="space-y-4">
-        {/* Empresa */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Nombre de la empresa
-          </label>
+      <form onSubmit={onSave} className="space-y-6">
+        {/* Logo */}
+        <div className="rounded-lg border bg-white p-4 space-y-2">
+          <h2 className="font-medium">Logo</h2>
+          <label className="text-sm text-zinc-600">URL del logo</label>
           <input
-            type="text"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
             className="input"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            RUT de la empresa
-          </label>
-          <input
-            type="text"
-            value={companyRut}
-            onChange={(e) => setCompanyRut(e.target.value)}
-            className="input"
-            placeholder="12.345.678-9"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Logo de la empresa (URL)
-          </label>
-          <input
-            type="text"
             value={logoUrl}
             onChange={(e) => setLogoUrl(e.target.value)}
-            className="input"
-            placeholder="/logoepp.png"
+            placeholder="https://... o /logo.png"
           />
+          {logoUrl ? (
+            <div className="mt-2 rounded border bg-zinc-50 p-3">
+              {/* preview simple */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logoUrl} alt="Logo" className="h-12 w-auto" />
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-500">Sin logo configurado.</p>
+          )}
         </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Stock crítico por defecto
-          </label>
-          <input
-            type="number"
-            min={1}
-            value={stockCritico}
-            onChange={(e) => setStockCritico(e.target.value)}
-            className="input"
-          />
-        </div>
+        {/* Alertas stock */}
+        <div className="rounded-lg border bg-white p-4 space-y-3">
+          <h2 className="font-medium">Alertas de stock crítico</h2>
 
-        <hr className="my-6" />
-
-        <h2 className="text-lg font-medium">
-          Stock crítico y alertas
-        </h2>
-
-        <div className="space-y-3">
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={usarStockCritico}
-              onChange={(e) =>
-                setUsarStockCritico(e.target.checked)
-              }
+              checked={stockCriticoActivo}
+              onChange={(e) => setStockCriticoActivo(e.target.checked)}
             />
-            Usar stock crítico
+            Usar stock crítico (umbral por producto)
           </label>
 
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={alertasCorreo}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setAlertasCorreo(checked);
-                if (checked && !correoAlertas) {
-                  setCorreoAlertas(adminEmail);
-                }
-              }}
+              checked={alertasActivas}
+              onChange={(e) => setAlertasActivas(e.target.checked)}
             />
             Enviar alertas por correo
           </label>
 
-          {alertasCorreo && (
-            <>
+          {alertasActivas && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-sm font-medium">
-                  Correo para alertas
-                </label>
+                <label className="mb-1 block text-sm font-medium">Correo alertas</label>
                 <input
-                  type="email"
-                  value={correoAlertas}
-                  onChange={(e) =>
-                    setCorreoAlertas(e.target.value)
-                  }
                   className="input"
+                  value={correoAlertas}
+                  onChange={(e) => setCorreoAlertas(e.target.value)}
                   placeholder="alertas@empresa.cl"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">
-                  Frecuencia
-                </label>
+                <label className="mb-1 block text-sm font-medium">Frecuencia</label>
                 <select
                   className="input"
-                  value={frecuenciaAlertas}
-                  onChange={(e) =>
-                    setFrecuenciaAlertas(e.target.value)
-                  }
+                  value={frecuencia}
+                  onChange={(e) => setFrecuencia(e.target.value as any)}
                 >
                   <option value="diaria">Diaria</option>
                   <option value="semanal">Semanal</option>
                 </select>
               </div>
+            </div>
+          )}
+
+          {!alertasActivas && (
+            <p className="text-xs text-zinc-500">
+              Alertas desactivadas. Se seguirá calculando stock crítico, pero no se enviarán correos.
+            </p>
+          )}
+        </div>
+
+        {/* Gerencia */}
+        <div className="rounded-lg border bg-white p-4 space-y-2">
+          <h2 className="font-medium">Gerencia (reportes)</h2>
+
+          {empresa.plan_tipo === "standard" ? (
+            <>
+              <p className="text-sm text-zinc-600">
+                En Plan Estándar, este correo recibe reportes/avisos gerenciales sin necesidad de tener acceso.
+              </p>
+              <label className="mb-1 block text-sm font-medium">Correo gerencia</label>
+              <input
+                className="input"
+                value={correoGerencia}
+                onChange={(e) => setCorreoGerencia(e.target.value)}
+                placeholder="gerencia@empresa.cl"
+              />
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-600">
+                En Plan Avanzado, la gerencia se gestiona como <b>usuario con rol</b>. Cambia/crea la gerencia desde <b>Usuarios</b>.
+              </p>
+              <div className="rounded border bg-zinc-50 p-3 text-sm">
+                <div className="text-zinc-500">Correo gerencia (solo lectura)</div>
+                <div className="font-medium">{empresa.email_gerencia ?? "—"}</div>
+              </div>
             </>
           )}
         </div>
 
-        <hr className="my-4" />
-
-        {/* Seguridad */}
-        <h2 className="text-lg font-medium">
-          Acceso administrador
-        </h2>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Correo de gerencia
-          </label>
-          <input
-            type="email"
-            value={correoGerencia}
-            onChange={(e) =>
-              setCorreoGerencia(e.target.value)
-            }
-            className="input"
-            placeholder="gerencia@empresa.cl"
-            required
-          />
-          <p className="mt-1 text-xs text-zinc-500">
-            Recibirá reportes mensuales de gestión.
-          </p>
-          <p className="text-xs text-zinc-500">
-            Debe ser distinto al correo del usuario administrador.
-          </p>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Correo administrador
-          </label>
-          <input
-            type="email"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-            className="input"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Nueva contraseña
-          </label>
-          <input
-            type="password"
-            value={adminPassword}
-            onChange={(e) => setAdminPassword(e.target.value)}
-            className="input"
-            placeholder="••••••"
-          />
-          <p className="mt-1 text-xs text-zinc-500">
-            Dejar en blanco para no cambiarla
-          </p>
-        </div>
-
         {error && (
-          <p className="text-sm text-red-600">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {error}
-          </p>
+          </div>
         )}
 
-        <div className="flex gap-3 pt-4">
-          <button
-            type="submit"
-            className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
-          >
-            Guardar cambios
-          </button>
-
-          {saved && (
-            <span className="self-center text-sm text-green-600">
-              Cambios guardados
-            </span>
-          )}
-        </div>
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+        >
+          {saving ? "Guardando…" : "Guardar cambios"}
+        </button>
       </form>
     </div>
   );

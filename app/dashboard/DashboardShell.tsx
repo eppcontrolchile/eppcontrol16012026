@@ -100,6 +100,7 @@ export default function DashboardShell({
     if (p.startsWith("/dashboard/trabajadores")) return "Trabajadores";
     if (p.startsWith("/dashboard/centros")) return "Centros de trabajo";
     if (p.startsWith("/dashboard/usuarios")) return "Usuarios y roles";
+    if (p.startsWith("/dashboard/configuracion")) return "Configuración";
     if (p.startsWith("/dashboard/suscripcion")) return "Suscripción";
     return "Dashboard";
   }, [pathname]);
@@ -216,6 +217,9 @@ export default function DashboardShell({
   // Usuarios y roles: SOLO admin y SOLO en plan advanced
   const canSeeUsuariosRoles = rol === "admin" && isAdvanced;
 
+  // Configuración: solo admin
+  const canSeeConfiguracion = rol === "admin";
+
   // Suscripción: solo admin
   const canSeeSuscripcion = rol === "admin";
 
@@ -233,6 +237,7 @@ export default function DashboardShell({
     if (p.startsWith("/dashboard/trabajadores")) return canSeeTrabajadores;
     if (p.startsWith("/dashboard/centros")) return canSeeCentros;
     if (p.startsWith("/dashboard/usuarios")) return canSeeUsuariosRoles;
+    if (p.startsWith("/dashboard/configuracion")) return canSeeConfiguracion;
     if (p.startsWith("/dashboard/suscripcion")) return canSeeSuscripcion;
 
     // rutas desconocidas dentro del dashboard:
@@ -400,6 +405,16 @@ export default function DashboardShell({
             </button>
           )}
 
+          {canSeeConfiguracion && (
+            <button
+              onClick={() => router.push("/dashboard/configuracion")}
+              className={navBtnClass(isActive("/dashboard/configuracion"))}
+              aria-current={isActive("/dashboard/configuracion") ? "page" : undefined}
+            >
+              <span aria-hidden>⚙️</span>
+              <span>Configuración</span>
+            </button>
+          )}
           {canSeeSuscripcion && (
             <button
               onClick={() => router.push("/dashboard/suscripcion")}

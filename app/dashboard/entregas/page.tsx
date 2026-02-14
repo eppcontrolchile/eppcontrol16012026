@@ -18,9 +18,22 @@ type Entrega = {
   centro: string;
 };
 
+// Helpers para parsear fechas correctamente como LOCAL (YYYY-MM-DD)
+function parseDateFlexible(input: string): Date {
+  const s = (input || "").toString().trim();
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    return new Date(y, mo - 1, d);
+  }
+  return new Date(s);
+}
+
 function formatFechaCL(value?: string | null) {
   if (!value) return "—";
-  const d = new Date(value);
+  const d = parseDateFlexible(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("es-CL");
 }
@@ -104,8 +117,8 @@ export default function EntregasPage() {
 
     switch (ordenCampo) {
       case "fecha":
-        aVal = new Date(a.fecha).getTime();
-        bVal = new Date(b.fecha).getTime();
+        aVal = parseDateFlexible(a.fecha).getTime();
+        bVal = parseDateFlexible(b.fecha).getTime();
         break;
       case "trabajador":
         aVal = a.trabajador.nombre;

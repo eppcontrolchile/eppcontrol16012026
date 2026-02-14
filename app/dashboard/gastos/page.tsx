@@ -1,8 +1,24 @@
 // app/dashboard/gastos/page.tsx
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+
+// Helpers para parsear fechas correctamente como LOCAL (YYYY-MM-DD)
+function parseDateFlexible(input: string): Date {
+  const s = (input || "").toString().trim();
+  // Si viene como YYYY-MM-DD, parsear como fecha LOCAL para evitar desfase por UTC
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    return new Date(y, mo - 1, d);
+  }
+  // Fallback: Date() estándar (para timestamps u otros formatos)
+  return new Date(s);
+}
 
 type Egreso = {
   id: string;
@@ -203,7 +219,7 @@ export default function GastosPage() {
   const filasExport = useMemo(() => {
     return egresosFiltrados.flatMap((e) =>
       e.items.map((item) => ({
-        fecha: new Date(e.fecha).toLocaleDateString(),
+        fecha: parseDateFlexible(e.fecha).toLocaleDateString("es-CL"),
         centro: e.trabajador.centro,
         trabajador: e.trabajador.nombre,
         epp: item.epp,
@@ -218,7 +234,7 @@ export default function GastosPage() {
     return egresosFiltrados.flatMap((e) =>
       e.items.map((item) => ({
         fechaISO: e.fecha, // para ordenar
-        fecha: new Date(e.fecha).toLocaleDateString(),
+        fecha: parseDateFlexible(e.fecha).toLocaleDateString("es-CL"),
         centro: e.trabajador.centro,
         trabajador: e.trabajador.nombre,
         epp: item.tallaNumero ? `${item.epp} (${item.tallaNumero})` : item.epp,
@@ -250,8 +266,8 @@ export default function GastosPage() {
     const arr = [...filasTabla];
     arr.sort((a, b) => {
       if (ordenCampo === "fecha") {
-        const at = new Date(a.fechaISO).getTime();
-        const bt = new Date(b.fechaISO).getTime();
+        const at = parseDateFlexible(a.fechaISO).getTime();
+        const bt = parseDateFlexible(b.fechaISO).getTime();
         return ordenDireccion === "asc" ? at - bt : bt - at;
       }
 
