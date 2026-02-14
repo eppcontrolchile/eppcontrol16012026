@@ -3,7 +3,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(request: NextRequest) {
-  // Response mutable para que Supabase pueda setear cookies y refrescar sesión
   let response = NextResponse.next({
     request: { headers: request.headers },
   });
@@ -34,11 +33,11 @@ export async function middleware(request: NextRequest) {
   const isDashboard = pathname.startsWith("/dashboard");
   const isOnboarding = pathname.startsWith("/onboarding");
   const isAuth = pathname.startsWith("/auth");
+  const isBloqueado = pathname.startsWith("/auth/bloqueado");
 
   async function getInternalUser() {
-    if (!user) return null as null | { id: string; empresa_id: string | null; activo: boolean | null };
+    if (!user) return null;
 
-    // Try by auth_user_id first
     const { data: byAuth, error: byAuthErr } = await supabase
       .from("usuarios")
       .select("id, empresa_id, activo")
@@ -47,7 +46,7 @@ export async function middleware(request: NextRequest) {
 
     let u: any = byAuth;
 
-    // Fallback by email (invitaciones/recovery)
+    // Fallback por email (invitaciones/recovery)
     if ((!u?.id || byAuthErr) && user.email) {
       const email = user.email.trim().toLowerCase();
       const { data: byEmail } = await supabase
@@ -58,21 +57,18 @@ export async function middleware(request: NextRequest) {
       u = byEmail;
     }
 
-    if (!u?.id) return null;
-
-    return {
-      id: String(u.id),
-      empresa_id: u.empresa_id ?? null,
-      activo: u.activo ?? null,
-    };
+    return u?.id ? u : null;
   }
 
-  async function isInternalUserComplete() {
-    const u = await getInternalUser();
-    if (!u) return false;
-    if (u.activo === false) return false;
-    if (!u.empresa_id) return false;
-    return true;
+  // 0) CORTA USUARIOS BLOQUEADOS (en cualquier ruta protegida o auth)
+  if (user && !isBloqueado) {
+    const iu = await getInternalUser();
+    if (iu && iu.activo === false) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/auth/bloqueado";
+      url.searchParams.delete("next");
+      return NextResponse.redirect(url);
+    }
   }
 
   // 1) Proteger dashboard/onboarding
@@ -83,40 +79,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 1.1) Si hay sesión pero el usuario interno está inactivo, forzar logout
-  if ((isDashboard || isOnboarding) && user) {
-    const internal = await getInternalUser();
-    if (internal?.activo === false) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/auth/logout";
-      url.searchParams.set("reason", "inactive");
-      // opcional: recordar a dónde intentaba ir
-      url.searchParams.set("next", pathname);
-      return NextResponse.redirect(url);
-    }
-  }
-
   // 2) Evitar que usuarios logueados queden pegados en /auth/login
-  // PERO: si el usuario interno está inactivo -> forzar logout
+  //    (pero ojo: ya filtramos bloqueados arriba)
   if (user && isAuth && pathname === "/auth/login") {
-    const internal = await getInternalUser();
-    if (internal?.activo === false) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/auth/logout";
-      url.searchParams.set("reason", "inactive");
-      url.searchParams.set("next", "/auth/login");
-      return NextResponse.redirect(url);
-    }
-
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
   // 3) En /auth/register: solo redirigir si el usuario interno ya está completo.
-  // Si falta (por truncates/invitaciones), dejamos que el registro/onboarding siga.
   if (user && isAuth && pathname === "/auth/register") {
-    const complete = await isInternalUserComplete();
+    const iu = await getInternalUser();
+    const complete = Boolean(iu?.id && iu?.empresa_id && iu?.activo !== false);
     if (complete) {
       const url = request.nextUrl.clone();
       url.pathname = "/dashboard";

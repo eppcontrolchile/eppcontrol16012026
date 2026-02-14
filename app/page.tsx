@@ -1,6 +1,7 @@
 // app/page.tsx
 import Image from "next/image";
 import Link from "next/link";
+import InstallPWAButton from "./InstallPWAButton";
 
 export default function LandingPage() {
   return (
@@ -66,15 +67,10 @@ export default function LandingPage() {
             Ya tengo cuenta
           </Link>
 
-          <Link
-            href="/m"
-            className="rounded-xl border border-sky-200 bg-white px-6 py-3 font-medium text-sky-700 hover:bg-sky-50 transition"
-          >
-            📲 Instalar App de Entregas
-          </Link>
+          <InstallPWAButton />
         </div>
 
-        <p className="mt-3 text-xs text-zinc-500">
+        <p className="mt-3 text-xs text-zinc-500 sm:hidden">
           En iPhone: abre en Safari → Compartir → “Agregar a pantalla de inicio”. En Android: Chrome mostrará “Instalar”.
         </p>
       </section>

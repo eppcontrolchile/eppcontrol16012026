@@ -1,31 +1,30 @@
 // app/m/page.tsx
 
-"use client";
-
-import Link from "next/link";
-
-export default function MobileHome() {
+export default function MobileInstallPage() {
   return (
-    <main className="min-h-screen bg-white text-zinc-900 px-5 py-8">
-      <div className="max-w-md mx-auto space-y-6">
-        <div className="rounded-2xl border bg-zinc-50 p-5">
-          <h1 className="text-2xl font-semibold">EPP Entregas</h1>
-          <p className="mt-2 text-sm text-zinc-600">
-            App operativa para registrar entregas con firma.
-          </p>
-        </div>
+    <main className="min-h-screen bg-white px-4 py-10">
+      <h1 className="text-2xl font-semibold">App de Entregas</h1>
+      <p className="mt-2 text-sm text-zinc-600">
+        Instala la app para registrar entregas de EPP en modo pantalla completa.
+      </p>
 
-        <Link
-          href="/auth/login?next=/m/entrega"
-          className="block w-full text-center rounded-xl bg-sky-600 py-4 text-white font-semibold text-lg hover:bg-sky-700"
-        >
-          Iniciar sesión y registrar entrega
-        </Link>
-
-        <p className="text-xs text-zinc-500">
-          Tip: instala esta app desde Chrome → menú ⋮ → “Instalar app”.
+      <div className="mt-6 rounded-xl border p-4">
+        <h2 className="font-medium">Android (Chrome)</h2>
+        <p className="mt-1 text-sm text-zinc-600">
+          Toca <b>Instalar</b> en la barra del navegador o en el menú ⋮.
         </p>
       </div>
+
+      <div className="mt-3 rounded-xl border p-4">
+        <h2 className="font-medium">iPhone (Safari)</h2>
+        <p className="mt-1 text-sm text-zinc-600">
+          Toca <b>Compartir</b> → <b>Agregar a pantalla de inicio</b>.
+        </p>
+      </div>
+
+      <p className="mt-6 text-xs text-zinc-500">
+        Al abrir la app desde el ícono, se solicitará iniciar sesión.
+      </p>
     </main>
   );
 }
