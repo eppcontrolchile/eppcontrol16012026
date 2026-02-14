@@ -35,7 +35,8 @@ type EgresoItemUI = {
 export default function EntregaPage() {
 
   const [error, setError] = useState<string>("");
-  const [success, setSuccess] = useState<string>("");
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successText, setSuccessText] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
@@ -56,6 +57,8 @@ export default function EntregaPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
   const [firmado, setFirmado] = useState<boolean>(false);
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerIdRef = useRef<number | null>(null);
 
   // ─────────────────────────────────────────────
   // Load trabajadores activos + stock
@@ -226,51 +229,142 @@ export default function EntregaPage() {
   };
 
   // ─────────────────────────────────────────────
-  // Firma: canvas simple
+  // Firma: canvas responsive (full area usable) + DPR-safe
   // ─────────────────────────────────────────────
-  const getCanvasPos = (e: any) => {
+  const resizeCanvasToDisplaySize = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+
+    const nextW = Math.max(1, Math.round(rect.width * dpr));
+    const nextH = Math.max(1, Math.round(rect.height * dpr));
+
+    if (canvas.width !== nextW || canvas.height !== nextH) {
+      const ctx = canvas.getContext("2d");
+      const prev = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
+
+      canvas.width = nextW;
+      canvas.height = nextH;
+
+      if (ctx) {
+        // reset + scale to CSS pixels
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "#111";
+
+        // best-effort restore
+        if (prev && prev.width > 0 && prev.height > 0) {
+          const tmp = document.createElement("canvas");
+          tmp.width = prev.width;
+          tmp.height = prev.height;
+          const tctx = tmp.getContext("2d");
+          if (tctx) {
+            tctx.putImageData(prev, 0, 0);
+            ctx.drawImage(tmp, 0, 0, rect.width, rect.height);
+          }
+        }
+      }
+    } else {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "#111";
+      }
+    }
+  };
+
+  useEffect(() => {
+    resizeCanvasToDisplaySize();
+
+    const onResize = () => resizeCanvasToDisplaySize();
+    window.addEventListener("resize", onResize);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && canvasRef.current) {
+      ro = new ResizeObserver(() => resizeCanvasToDisplaySize());
+      ro.observe(canvasRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (ro) ro.disconnect();
+    };
+  }, []);
+
+  const getCanvasPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches?.[0]?.clientX ?? e.clientX;
-    const clientY = e.touches?.[0]?.clientY ?? e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const startDraw = (e: any) => {
+  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    e.preventDefault();
+    resizeCanvasToDisplaySize();
+
+    pointerIdRef.current = e.pointerId;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
+
+    drawingRef.current = true;
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    drawingRef.current = true;
     const { x, y } = getCanvasPos(e);
+    lastPosRef.current = { x, y };
+
     ctx.beginPath();
     ctx.moveTo(x, y);
 
-    // Evita re-render por cada trazo: marcamos "firmado" una sola vez al iniciar
     if (!firmado) setFirmado(true);
   };
 
-  const draw = (e: any) => {
+  const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drawingRef.current) return;
+    if (pointerIdRef.current !== null && e.pointerId !== pointerIdRef.current) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    e.preventDefault?.();
+    e.preventDefault();
 
     const { x, y } = getCanvasPos(e);
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#111";
+
+    if (!lastPosRef.current) {
+      lastPosRef.current = { x, y };
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    }
+
     ctx.lineTo(x, y);
     ctx.stroke();
+
+    lastPosRef.current = { x, y };
   };
 
   const endDraw = () => {
+    const canvas = canvasRef.current;
+    try {
+      if (canvas && pointerIdRef.current !== null) {
+        canvas.releasePointerCapture(pointerIdRef.current);
+      }
+    } catch {}
+
     drawingRef.current = false;
+    lastPosRef.current = null;
+    pointerIdRef.current = null;
   };
 
   const clearFirma = () => {
@@ -278,13 +372,17 @@ export default function EntregaPage() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
     setFirmado(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSuccess("");
+    setSuccessOpen(false);
+    setSuccessText("");
     setError("");
 
     if (submitting) return;
@@ -365,9 +463,12 @@ export default function EntregaPage() {
       }
 
       // PWA: no navegar a dashboard. Limpiar formulario y mostrar confirmación.
-      setSuccess(
-        `Entrega registrada ✅ · Unidades: ${Number(result.total_unidades).toLocaleString("es-CL")} · Total: $${Number(result.costo_total_iva).toLocaleString("es-CL")}`
+      const totalUnidades = Number(result.total_unidades ?? 0);
+      const costoTotal = Number(result.costo_total_iva ?? 0);
+      setSuccessText(
+        `Entrega registrada ✅\n\nUnidades: ${totalUnidades.toLocaleString("es-CL")}\nTotal: $${costoTotal.toLocaleString("es-CL")}`
       );
+      setSuccessOpen(true);
 
       setTrabajadorId("");
       setItems([{ categoria: "", epp: "", tallaNumero: "", cantidad: 1 }]);
@@ -392,11 +493,11 @@ export default function EntregaPage() {
         </p>
       </div>
 
-      {success && (
-        <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-          {success}
-        </div>
-      )}
+      <SuccessModal
+        open={successOpen}
+        text={successText}
+        onClose={() => setSuccessOpen(false)}
+      />
 
       {error && (
         <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -410,7 +511,7 @@ export default function EntregaPage() {
           <select
             className="input h-12 text-base"
             value={trabajadorId}
-            onChange={(e) => { setTrabajadorId(e.target.value); setSuccess(""); }}
+            onChange={(e) => { setTrabajadorId(e.target.value); setSuccessOpen(false); setSuccessText(""); }}
           >
             <option value="">Selecciona trabajador activo…</option>
             {trabajadores.map((t) => (
@@ -532,18 +633,13 @@ export default function EntregaPage() {
           <div className="rounded border bg-zinc-50 p-2">
             <canvas
               ref={canvasRef}
-              width={640}
-              height={200}
               className="w-full h-[200px] bg-white rounded"
               style={{ touchAction: "none" }}
-              onMouseDown={startDraw}
-              onMouseMove={draw}
-              onMouseUp={endDraw}
-              onMouseLeave={endDraw}
-              onTouchStart={startDraw}
-              onTouchMove={draw}
-              onTouchEnd={endDraw}
-              onTouchCancel={endDraw}
+              onPointerDown={startDraw}
+              onPointerMove={draw}
+              onPointerUp={endDraw}
+              onPointerCancel={endDraw}
+              onPointerLeave={endDraw}
             />
           </div>
 
@@ -566,3 +662,35 @@ export default function EntregaPage() {
   );
 }
 
+
+
+function SuccessModal({
+  open,
+  text,
+  onClose,
+}: {
+  open: boolean;
+  text: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+        <h3 className="text-lg font-semibold">Entrega registrada</h3>
+        <pre className="mt-2 whitespace-pre-wrap text-sm text-zinc-700">{text}</pre>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

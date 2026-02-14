@@ -60,8 +60,24 @@ export default function LoginPage() {
 
     try {
       const params = new URLSearchParams(window.location.search);
-      const rawNext = params.get("next") || "/dashboard";
-      const next = rawNext.startsWith("/") ? rawNext : "/dashboard";
+      let rawNext = params.get("next");
+
+      // ✅ Fallback PWA: si no viene ?next=..., y el usuario llegó desde /m (instalación/launcher),
+      // forzamos la ruta operativa de entregas.
+      // Esto evita que el primer login termine en /dashboard cuando la PWA abre /m.
+      if (!rawNext) {
+        const ref = document.referrer || "";
+        const path = window.location.pathname || "";
+        if (ref.includes("/m") || path.startsWith("/m")) {
+          rawNext = "/m/entrega";
+        }
+      }
+
+      // Normaliza: solo permitimos rutas internas seguras
+      const next =
+        rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.startsWith("/auth")
+          ? rawNext
+          : "/dashboard";
 
       // Persistencia de sesión (se aplica en lib/supabase/client.ts):
       // - rememberMe = true  -> localStorage (permanece días)

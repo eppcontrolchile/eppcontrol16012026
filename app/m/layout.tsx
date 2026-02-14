@@ -29,7 +29,7 @@ export default async function MobileLayout({ children }: { children: ReactNode }
   );
 
   const { data: { user }, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !user) redirect("/auth/login");
+  if (authErr || !user) redirect("/auth/login?next=/m/entrega");
 
   // Resolver usuario interno
   const { data: usuarioByAuth } = await supabase
@@ -54,14 +54,14 @@ export default async function MobileLayout({ children }: { children: ReactNode }
     }
   }
 
-  if (!usuario?.id) redirect("/auth/login?reason=missing_usuario");
+  if (!usuario?.id) redirect("/auth/login?next=/m/entrega&reason=missing_usuario");
 
   if (usuario.activo === false) {
-    redirect("/auth/login?reason=inactive");
+    redirect("/auth/login?next=/m/entrega&reason=inactive");
   }
 
   if (!usuario.empresa_id) {
-    redirect("/auth/login?reason=missing_empresa_id");
+    redirect("/auth/login?next=/m/entrega&reason=missing_empresa_id");
   }
 
   // Layout ultra simple

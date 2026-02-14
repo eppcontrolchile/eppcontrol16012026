@@ -3,46 +3,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function EntregasMobileLanding() {
-  const router = useRouter();
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const { data } = await supabaseBrowser().auth.getUser();
-        if (cancelled) return;
-
-        if (data?.user) {
-          router.replace("/m/entrega");
-          return;
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setChecking(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  if (checking) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-sm text-zinc-500">
-        Cargando…
-      </div>
-    );
-  }
-
   return (
     <main className="min-h-screen bg-white text-zinc-900 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md space-y-6">
