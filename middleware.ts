@@ -35,8 +35,8 @@ export async function middleware(request: NextRequest) {
   const isOnboarding = pathname.startsWith("/onboarding");
   const isAuth = pathname.startsWith("/auth");
 
-  async function isInternalUserComplete() {
-    if (!user) return false;
+  async function getInternalUser() {
+    if (!user) return null as null | { id: string; empresa_id: string | null; activo: boolean | null };
 
     // Try by auth_user_id first
     const { data: byAuth, error: byAuthErr } = await supabase
@@ -58,10 +58,20 @@ export async function middleware(request: NextRequest) {
       u = byEmail;
     }
 
-    if (!u?.id) return false;
+    if (!u?.id) return null;
+
+    return {
+      id: String(u.id),
+      empresa_id: u.empresa_id ?? null,
+      activo: u.activo ?? null,
+    };
+  }
+
+  async function isInternalUserComplete() {
+    const u = await getInternalUser();
+    if (!u) return false;
     if (u.activo === false) return false;
     if (!u.empresa_id) return false;
-
     return true;
   }
 
@@ -73,8 +83,31 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // 1.1) Si hay sesión pero el usuario interno está inactivo, forzar logout
+  if ((isDashboard || isOnboarding) && user) {
+    const internal = await getInternalUser();
+    if (internal?.activo === false) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/auth/logout";
+      url.searchParams.set("reason", "inactive");
+      // opcional: recordar a dónde intentaba ir
+      url.searchParams.set("next", pathname);
+      return NextResponse.redirect(url);
+    }
+  }
+
   // 2) Evitar que usuarios logueados queden pegados en /auth/login
+  // PERO: si el usuario interno está inactivo -> forzar logout
   if (user && isAuth && pathname === "/auth/login") {
+    const internal = await getInternalUser();
+    if (internal?.activo === false) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/auth/logout";
+      url.searchParams.set("reason", "inactive");
+      url.searchParams.set("next", "/auth/login");
+      return NextResponse.redirect(url);
+    }
+
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
