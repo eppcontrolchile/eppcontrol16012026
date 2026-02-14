@@ -39,6 +39,11 @@ export default function EntregasPage() {
   const [entregas, setEntregas] = useState<Entrega[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [ordenCampo, setOrdenCampo] = useState<
+    "fecha" | "trabajador" | "centro" | "total_unidades" | "costo_total_iva" | null
+  >(null);
+  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
+
   useEffect(() => {
     const fetchEntregas = async () => {
       setLoading(true);
@@ -90,6 +95,57 @@ export default function EntregasPage() {
 
     fetchEntregas();
   }, []);
+
+  const entregasOrdenadas = [...entregas].sort((a, b) => {
+    if (!ordenCampo) return 0;
+
+    let aVal: any;
+    let bVal: any;
+
+    switch (ordenCampo) {
+      case "fecha":
+        aVal = new Date(a.fecha).getTime();
+        bVal = new Date(b.fecha).getTime();
+        break;
+      case "trabajador":
+        aVal = a.trabajador.nombre;
+        bVal = b.trabajador.nombre;
+        break;
+      case "centro":
+        aVal = a.centro;
+        bVal = b.centro;
+        break;
+      case "total_unidades":
+        aVal = a.total_unidades;
+        bVal = b.total_unidades;
+        break;
+      case "costo_total_iva":
+        aVal = a.costo_total_iva;
+        bVal = b.costo_total_iva;
+        break;
+      default:
+        return 0;
+    }
+
+    if (typeof aVal === "number" && typeof bVal === "number") {
+      return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
+    }
+
+    return ordenDireccion === "asc"
+      ? String(aVal).localeCompare(String(bVal))
+      : String(bVal).localeCompare(String(aVal));
+  });
+
+  const handleOrden = (
+    campo: "fecha" | "trabajador" | "centro" | "total_unidades" | "costo_total_iva"
+  ) => {
+    if (ordenCampo === campo) {
+      setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenCampo(campo);
+      setOrdenDireccion("asc");
+    }
+  };
 
   if (loading) {
     return <p className="text-sm text-zinc-500">Cargando entregas…</p>;
@@ -182,16 +238,41 @@ export default function EntregasPage() {
         <table className="w-full text-sm">
           <thead className="bg-zinc-100">
             <tr>
-              <th className="p-2 text-left">Fecha</th>
-              <th className="p-2 text-left">Trabajador</th>
-              <th className="p-2 text-left">Centro</th>
-              <th className="p-2 text-right">Unidades</th>
-              <th className="p-2 text-right">Total IVA</th>
+              <th
+                onClick={() => handleOrden("fecha")}
+                className="cursor-pointer p-2 text-left"
+              >
+                Fecha {ordenCampo === "fecha" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                onClick={() => handleOrden("trabajador")}
+                className="cursor-pointer p-2 text-left"
+              >
+                Trabajador {ordenCampo === "trabajador" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                onClick={() => handleOrden("centro")}
+                className="cursor-pointer p-2 text-left"
+              >
+                Centro {ordenCampo === "centro" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                onClick={() => handleOrden("total_unidades")}
+                className="cursor-pointer p-2 text-right"
+              >
+                Unidades {ordenCampo === "total_unidades" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                onClick={() => handleOrden("costo_total_iva")}
+                className="cursor-pointer p-2 text-right"
+              >
+                Total IVA {ordenCampo === "costo_total_iva" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
               <th className="p-2 text-left">PDF</th>
             </tr>
           </thead>
           <tbody>
-            {entregas.map((e) => (
+            {entregasOrdenadas.map((e) => (
               <tr key={e.id} className="border-t">
                 <td className="whitespace-nowrap p-2">{formatFechaCL(e.fecha)}</td>
                 <td className="p-2">

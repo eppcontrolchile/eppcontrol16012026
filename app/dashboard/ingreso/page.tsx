@@ -73,12 +73,9 @@ const [items, setItems] = useState<IngresoItem[]>([
 
 const [historial, setHistorial] = useState<IngresoHistorialRow[]>([]);
 
-const [ordenCampo, setOrdenCampo] = useState<
-  keyof IngresoHistorialRow | null
->(null);
-const [ordenDireccion, setOrdenDireccion] = useState<
-  "asc" | "desc"
->("desc");
+// Orden por defecto: fecha DESC (más recientes arriba)
+const [ordenCampo, setOrdenCampo] = useState<keyof IngresoHistorialRow>("fecha");
+const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
 
 const ITEMS_POR_HOJA = 20;
 const [pagina, setPagina] = useState(1);
@@ -124,8 +121,7 @@ useEffect(() => {
         };
       });
 
-      // Ordenar por fecha descendente (parse local para YYYY-MM-DD)
-      data.sort((a, b) => parseDateFlexible(b.fecha).getTime() - parseDateFlexible(a.fecha).getTime());
+      // No ordenamos acá: el orden lo controla `historialOrdenado` (soporta flechas)
       setPagina(1);
       setHistorial(data);
     } catch (err) {
@@ -140,20 +136,31 @@ const totalPaginas = Math.ceil(
 );
 
 const historialOrdenado = [...historial].sort((a, b) => {
-  if (!ordenCampo) return 0;
+  const campo = ordenCampo;
+  if (!campo) return 0;
 
-  const aVal = a[ordenCampo];
-  const bVal = b[ordenCampo];
+  const aVal = a[campo] as any;
+  const bVal = b[campo] as any;
 
-  if (typeof aVal === "number" && typeof bVal === "number") {
-    return ordenDireccion === "asc"
-      ? aVal - bVal
-      : bVal - aVal;
+  // Fecha: usar parser local para evitar desfases por zona horaria
+  if (campo === "fecha") {
+    const at = parseDateFlexible(String(aVal ?? "")).getTime();
+    const bt = parseDateFlexible(String(bVal ?? "")).getTime();
+    const diff = at - bt;
+    return ordenDireccion === "asc" ? diff : -diff;
   }
 
-  return ordenDireccion === "asc"
-    ? String(aVal).localeCompare(String(bVal))
-    : String(bVal).localeCompare(String(aVal));
+  // Números
+  if (typeof aVal === "number" && typeof bVal === "number") {
+    const diff = aVal - bVal;
+    return ordenDireccion === "asc" ? diff : -diff;
+  }
+
+  // Strings (incluye null/undefined)
+  const as = (aVal ?? "").toString();
+  const bs = (bVal ?? "").toString();
+  const diff = as.localeCompare(bs, "es", { sensitivity: "base" });
+  return ordenDireccion === "asc" ? diff : -diff;
 });
 
 const historialPaginado = historialOrdenado.slice(
@@ -479,7 +486,7 @@ const refrescarHistorial = async () => {
       };
     });
 
-    data.sort((a, b) => parseDateFlexible(b.fecha).getTime() - parseDateFlexible(a.fecha).getTime());
+    // No ordenamos acá: el orden lo controla `historialOrdenado` (soporta flechas)
     setPagina(1);
     setHistorial(data);
   } catch {

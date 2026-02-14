@@ -80,6 +80,11 @@ export default function GastosPage() {
   const [reloadNonce, setReloadNonce] = useState(0);
   const [debug, setDebug] = useState<{ empresaId?: string; entregasCount?: number } | null>(null);
 
+  const [ordenCampo, setOrdenCampo] = useState<
+    "fecha" | "centro" | "trabajador" | "epp" | "cantidad" | "costo"
+  >("fecha");
+  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
+
   useEffect(() => {
     let cancelled = false;
 
@@ -208,6 +213,61 @@ export default function GastosPage() {
       }))
     );
   }, [egresosFiltrados]);
+
+  const filasTabla = useMemo(() => {
+    return egresosFiltrados.flatMap((e) =>
+      e.items.map((item) => ({
+        fechaISO: e.fecha, // para ordenar
+        fecha: new Date(e.fecha).toLocaleDateString(),
+        centro: e.trabajador.centro,
+        trabajador: e.trabajador.nombre,
+        epp: item.tallaNumero ? `${item.epp} (${item.tallaNumero})` : item.epp,
+        cantidad: item.cantidad,
+        costo: item.costoTotal ?? 0,
+      }))
+    );
+  }, [egresosFiltrados]);
+
+  const handleOrden = (
+    campo: "fecha" | "centro" | "trabajador" | "epp" | "cantidad" | "costo"
+  ) => {
+    if (ordenCampo === campo) {
+      setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenCampo(campo);
+      setOrdenDireccion("asc");
+    }
+  };
+
+  const arrow = (
+    campo: "fecha" | "centro" | "trabajador" | "epp" | "cantidad" | "costo"
+  ) => {
+    if (ordenCampo !== campo) return null;
+    return ordenDireccion === "asc" ? " ▲" : " ▼";
+  };
+
+  const filasTablaOrdenadas = useMemo(() => {
+    const arr = [...filasTabla];
+    arr.sort((a, b) => {
+      if (ordenCampo === "fecha") {
+        const at = new Date(a.fechaISO).getTime();
+        const bt = new Date(b.fechaISO).getTime();
+        return ordenDireccion === "asc" ? at - bt : bt - at;
+      }
+
+      const aVal = (a as any)[ordenCampo];
+      const bVal = (b as any)[ordenCampo];
+
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
+      }
+
+      return ordenDireccion === "asc"
+        ? String(aVal ?? "").localeCompare(String(bVal ?? ""))
+        : String(bVal ?? "").localeCompare(String(aVal ?? ""));
+    });
+    return arr;
+  }, [filasTabla, ordenCampo, ordenDireccion]);
 
   const resumen = useMemo(() => {
     let total = 0;
@@ -371,37 +431,55 @@ export default function GastosPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-zinc-50">
             <tr>
-              <th className="p-2 text-left">Fecha</th>
-              <th className="p-2 text-left">Centro</th>
-              <th className="p-2 text-left">Trabajador</th>
-              <th className="p-2 text-left">EPP</th>
-              <th className="p-2 text-right">Cantidad</th>
-              <th className="p-2 text-right">Costo ($)</th>
+              <th
+                onClick={() => handleOrden("fecha")}
+                className="p-2 text-left cursor-pointer select-none"
+              >
+                Fecha{arrow("fecha")}
+              </th>
+              <th
+                onClick={() => handleOrden("centro")}
+                className="p-2 text-left cursor-pointer select-none"
+              >
+                Centro{arrow("centro")}
+              </th>
+              <th
+                onClick={() => handleOrden("trabajador")}
+                className="p-2 text-left cursor-pointer select-none"
+              >
+                Trabajador{arrow("trabajador")}
+              </th>
+              <th
+                onClick={() => handleOrden("epp")}
+                className="p-2 text-left cursor-pointer select-none"
+              >
+                EPP{arrow("epp")}
+              </th>
+              <th
+                onClick={() => handleOrden("cantidad")}
+                className="p-2 text-right cursor-pointer select-none"
+              >
+                Cantidad{arrow("cantidad")}
+              </th>
+              <th
+                onClick={() => handleOrden("costo")}
+                className="p-2 text-right cursor-pointer select-none"
+              >
+                Costo ($){arrow("costo")}
+              </th>
             </tr>
           </thead>
           <tbody>
-            {egresosFiltrados.flatMap((e) =>
-              e.items.map((item, i) => (
-                <tr key={`${e.id}-${i}`} className="border-t">
-                  <td className="p-2">
-                    {new Date(e.fecha).toLocaleDateString()}
-                  </td>
-                  <td className="p-2">{e.trabajador.centro}</td>
-                  <td className="p-2">{e.trabajador.nombre}</td>
-                  <td className="p-2">
-                    {item.epp}{" "}
-                    {item.tallaNumero &&
-                      `(${item.tallaNumero})`}
-                  </td>
-                  <td className="p-2 text-right">
-                    {item.cantidad}
-                  </td>
-                  <td className="p-2 text-right">
-                    {(item.costoTotal ?? 0).toLocaleString("es-CL")}
-                  </td>
-                </tr>
-              ))
-            )}
+            {filasTablaOrdenadas.map((r, i) => (
+              <tr key={`${r.fechaISO}-${r.trabajador}-${r.epp}-${i}`} className="border-t">
+                <td className="p-2">{r.fecha}</td>
+                <td className="p-2">{r.centro}</td>
+                <td className="p-2">{r.trabajador}</td>
+                <td className="p-2">{r.epp}</td>
+                <td className="p-2 text-right">{r.cantidad}</td>
+                <td className="p-2 text-right">{r.costo.toLocaleString("es-CL")}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

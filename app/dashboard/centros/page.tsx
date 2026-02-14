@@ -333,9 +333,9 @@ export default function CentrosPage() {
       </div>
 
       {/* Tabla */}
-      <div className="rounded-lg border bg-white">
+      <div className="overflow-hidden rounded-lg border bg-white">
         <table className="w-full text-sm">
-          <thead className="bg-zinc-50 text-left">
+          <thead className="bg-zinc-50 text-left border-b">
             <tr>
               <th
                 onClick={() => ordenar("nombre")}

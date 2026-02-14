@@ -75,6 +75,45 @@ export default function UsuariosPage() {
   // 🔎 buscador
   const [q, setQ] = useState("");
 
+  // ↕️ ordenamiento tabla
+  const [ordenCampo, setOrdenCampo] = useState<keyof UsuarioRow | null>(null);
+  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
+
+  const handleOrden = (campo: keyof UsuarioRow) => {
+    if (ordenCampo === campo) {
+      setOrdenDireccion((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenCampo(campo);
+      setOrdenDireccion("asc");
+    }
+  };
+
+  const thClass = (campo: keyof UsuarioRow) =>
+    [
+      "p-2 text-left select-none",
+      "cursor-pointer hover:bg-zinc-100",
+      ordenCampo === campo ? "text-zinc-900" : "text-zinc-700",
+    ].join(" ");
+
+  const thRightClass = (campo: keyof UsuarioRow) =>
+    [
+      "p-2 text-right select-none",
+      "cursor-pointer hover:bg-zinc-100",
+      ordenCampo === campo ? "text-zinc-900" : "text-zinc-700",
+    ].join(" ");
+
+  const thCenterClass = (campo: keyof UsuarioRow) =>
+    [
+      "p-2 text-center select-none",
+      "cursor-pointer hover:bg-zinc-100",
+      ordenCampo === campo ? "text-zinc-900" : "text-zinc-700",
+    ].join(" ");
+
+  const arrow = (campo: keyof UsuarioRow) => {
+    if (ordenCampo !== campo) return "";
+    return ordenDireccion === "asc" ? " ▲" : " ▼";
+  };
+
   // 🧯 confirmación desactivar
   const [confirmOff, setConfirmOff] = useState<null | { id: string; nombre: string }>(null);
 
@@ -302,6 +341,41 @@ export default function UsuariosPage() {
     });
   }, [usuarios, q]);
 
+  const usuariosOrdenados = useMemo(() => {
+    const arr = [...usuariosFiltrados];
+    if (!ordenCampo) return arr;
+
+    const dir = ordenDireccion === "asc" ? 1 : -1;
+
+    const getVal = (u: UsuarioRow) => {
+      const v = (u as any)[ordenCampo as keyof UsuarioRow];
+      return v;
+    };
+
+    arr.sort((a, b) => {
+      const av = getVal(a);
+      const bv = getVal(b);
+
+      // numbers
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+
+      // booleans
+      if (typeof av === "boolean" && typeof bv === "boolean") return (Number(av) - Number(bv)) * dir;
+
+      // dates (for last_login_at)
+      if (ordenCampo === "last_login_at") {
+        const ad = av ? new Date(String(av)).getTime() : 0;
+        const bd = bv ? new Date(String(bv)).getTime() : 0;
+        return (ad - bd) * dir;
+      }
+
+      // strings
+      return String(av ?? "").localeCompare(String(bv ?? ""), "es", { sensitivity: "base" }) * dir;
+    });
+
+    return arr;
+  }, [usuariosFiltrados, ordenCampo, ordenDireccion]);
+
   if (loading) {
     return (
       <div className="rounded-lg border bg-white p-4 text-sm text-zinc-600">
@@ -434,18 +508,27 @@ export default function UsuariosPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-zinc-50">
             <tr>
-              <th className="p-2 text-left">Nombre</th>
-              <th className="p-2 text-left">Email</th>
-              <th className="p-2 text-left">Rol</th>
-              <th className="p-2 text-left">Etiqueta</th>
-              <th className="p-2 text-left">Última conexión</th>
-              <th className="p-2 text-center">Activo</th>
+              <th onClick={() => handleOrden("nombre")} className={thClass("nombre")}>
+                Nombre{arrow("nombre")}
+              </th>
+              <th onClick={() => handleOrden("email")} className={thClass("email")}>
+                Email{arrow("email")}
+              </th>
+              <th onClick={() => handleOrden("rol")} className={thClass("rol")}>
+                Rol{arrow("rol")}
+              </th>
+              <th onClick={() => handleOrden("last_login_at")} className={thClass("last_login_at")}>
+                Última conexión{arrow("last_login_at")}
+              </th>
+              <th onClick={() => handleOrden("activo")} className={thCenterClass("activo")}>
+                Activo{arrow("activo")}
+              </th>
               <th className="p-2 text-right">Acciones</th>
             </tr>
           </thead>
 
           <tbody>
-            {usuariosFiltrados.map((u) => {
+            {usuariosOrdenados.map((u) => {
               const isMe = u.id === miUsuarioId;
               const r = roleLabel(u.rol);
 
@@ -507,12 +590,11 @@ export default function UsuariosPage() {
                         (Protegido) No puedes cambiar tu propio rol.
                       </p>
                     )}
-                  </td>
-
-                  <td className="p-2">
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${roleChipClass(r)}`}>
-                      {r}
-                    </span>
+                    <div className="mt-1">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${roleChipClass(r)}`}>
+                        {r}
+                      </span>
+                    </div>
                   </td>
 
                   <td className="p-2 text-sm text-zinc-600">{formatLastLogin(u.last_login_at)}</td>

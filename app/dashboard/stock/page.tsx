@@ -17,6 +17,8 @@ export default function StockPage() {
   const [items, setItems] = useState<StockItem[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<number>(0);
+  const [ordenCampo, setOrdenCampo] = useState<keyof StockItem | null>(null);
+  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     const loadStock = async () => {
@@ -52,6 +54,30 @@ export default function StockPage() {
     };
   };
 
+  const handleOrden = (campo: keyof StockItem) => {
+    if (ordenCampo === campo) {
+      setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenCampo(campo);
+      setOrdenDireccion("asc");
+    }
+  };
+
+  const itemsOrdenados = [...items].sort((a, b) => {
+    if (!ordenCampo) return 0;
+
+    const aVal = a[ordenCampo];
+    const bVal = b[ordenCampo];
+
+    if (typeof aVal === "number" && typeof bVal === "number") {
+      return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
+    }
+
+    return ordenDireccion === "asc"
+      ? String(aVal ?? "").localeCompare(String(bVal ?? ""))
+      : String(bVal ?? "").localeCompare(String(aVal ?? ""));
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -67,16 +93,41 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead className="bg-zinc-50 text-left">
               <tr>
-                <th className="px-4 py-3">Categoría</th>
-                <th className="px-4 py-3">EPP</th>
-                <th className="px-4 py-3">Talla</th>
-                <th className="px-4 py-3">Stock</th>
-                <th className="px-4 py-3">Stock crítico</th>
+                <th
+                  onClick={() => handleOrden("categoria")}
+                  className="px-4 py-3 cursor-pointer"
+                >
+                  Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                </th>
+                <th
+                  onClick={() => handleOrden("nombre")}
+                  className="px-4 py-3 cursor-pointer"
+                >
+                  EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                </th>
+                <th
+                  onClick={() => handleOrden("talla")}
+                  className="px-4 py-3 cursor-pointer"
+                >
+                  Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                </th>
+                <th
+                  onClick={() => handleOrden("stock")}
+                  className="px-4 py-3 cursor-pointer"
+                >
+                  Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                </th>
+                <th
+                  onClick={() => handleOrden("stockCritico")}
+                  className="px-4 py-3 cursor-pointer"
+                >
+                  Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                </th>
                 <th className="px-4 py-3">Estado</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {itemsOrdenados.map((item) => {
                 const estado = getEstado(item);
 
                 return (

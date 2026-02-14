@@ -196,6 +196,9 @@ export default function EgresoPage() {
     const { x, y } = getCanvasPos(e);
     ctx.beginPath();
     ctx.moveTo(x, y);
+
+    // Evita re-render por cada trazo: marcamos "firmado" una sola vez al iniciar
+    if (!firmado) setFirmado(true);
   };
 
   const draw = (e: any) => {
@@ -213,7 +216,6 @@ export default function EgresoPage() {
     ctx.strokeStyle = "#111";
     ctx.lineTo(x, y);
     ctx.stroke();
-    setFirmado(true);
   };
 
   const endDraw = () => {
@@ -476,6 +478,7 @@ export default function EgresoPage() {
               width={640}
               height={200}
               className="w-full h-[200px] bg-white rounded"
+              style={{ touchAction: "none" }}
               onMouseDown={startDraw}
               onMouseMove={draw}
               onMouseUp={endDraw}
@@ -483,6 +486,7 @@ export default function EgresoPage() {
               onTouchStart={startDraw}
               onTouchMove={draw}
               onTouchEnd={endDraw}
+              onTouchCancel={endDraw}
             />
           </div>
 

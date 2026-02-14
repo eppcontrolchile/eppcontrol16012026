@@ -93,7 +93,7 @@ export default function TrabajadoresPage() {
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<"nombre" | "rut" | "estado" | null>(null);
+  const [sortKey, setSortKey] = useState<"nombre" | "rut" | "estado" | null>("nombre");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
 
@@ -129,8 +129,7 @@ export default function TrabajadoresPage() {
       const { data: trabajadoresData, error: trabajadoresError } = await supabaseBrowser()
         .from("trabajadores")
         .select("*")
-        .eq("empresa_id", empresa_id)
-        .order("nombre");
+        .eq("empresa_id", empresa_id);
       if (!trabajadoresError && trabajadoresData) {
         setTrabajadores(trabajadoresData as Trabajador[]);
       }
