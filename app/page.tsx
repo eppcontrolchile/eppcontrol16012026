@@ -67,7 +67,7 @@ export default function LandingPage() {
           </Link>
 
           <Link
-            href="/m/entrega"
+            href="/m"
             className="rounded-xl border border-sky-200 bg-white px-6 py-3 font-medium text-sky-700 hover:bg-sky-50 transition"
           >
             📲 Instalar App de Entregas
