@@ -79,13 +79,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 2) Evitar que usuarios logueados queden pegados en /auth/login
-  //    (pero ojo: ya filtramos bloqueados arriba)
-  if (user && isAuth && pathname === "/auth/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
-  }
+    // 2) Evitar que usuarios logueados queden pegados en /auth/login
+    //    Respeta ?next=... (ej: /m/entrega para la PWA)
+    if (user && isAuth && pathname === "/auth/login") {
+      const nextParam = request.nextUrl.searchParams.get("next") || "";
+
+      // Solo permitimos redirects internos y evitamos loops a /auth
+      const safeNext =
+        nextParam.startsWith("/") &&
+        !nextParam.startsWith("/auth") &&
+        !nextParam.startsWith("//")
+          ? nextParam
+          : "";
+
+      const url = request.nextUrl.clone();
+      url.pathname = safeNext || "/dashboard";
+      url.search = ""; // limpia query para no arrastrarla
+      return NextResponse.redirect(url);
+    }
 
   // 3) En /auth/register: solo redirigir si el usuario interno ya está completo.
   if (user && isAuth && pathname === "/auth/register") {
