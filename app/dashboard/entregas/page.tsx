@@ -2,7 +2,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 type Entrega = {
@@ -53,9 +53,60 @@ export default function EntregasPage() {
   const [loading, setLoading] = useState(true);
 
   const [ordenCampo, setOrdenCampo] = useState<
-    "fecha" | "trabajador" | "centro" | "total_unidades" | "costo_total_iva" | null
+    "fecha" | "trabajador" | "rut" | "centro" | "total_unidades" | "costo_total_iva" | null
   >(null);
   const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
+
+  const [fDesde, setFDesde] = useState<string>("");
+  const [fHasta, setFHasta] = useState<string>("");
+  const [fTrabajador, setFTrabajador] = useState<string>("");
+  const [fRut, setFRut] = useState<string>("");
+  const [fCentro, setFCentro] = useState<string>("");
+
+  const norm = (v: string) => (v || "").toString().trim().toLowerCase();
+
+  const endOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(23, 59, 59, 999);
+    return x;
+  };
+
+  const centrosDisponibles = useMemo(() => {
+    return Array.from(new Set(entregas.map((e) => e.centro).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+  }, [entregas]);
+
+  const entregasFiltradas = useMemo(() => {
+    const desdeT = fDesde ? parseDateFlexible(fDesde).getTime() : null;
+    const hastaT = fHasta ? endOfDay(parseDateFlexible(fHasta)).getTime() : null;
+
+    const qTrab = norm(fTrabajador);
+    const qRut = norm(fRut);
+    const qCentro = norm(fCentro);
+
+    return entregas.filter((e) => {
+      const t = parseDateFlexible(e.fecha).getTime();
+      if (desdeT !== null && t < desdeT) return false;
+      if (hastaT !== null && t > hastaT) return false;
+
+      if (qTrab) {
+        const nombre = norm(e.trabajador?.nombre || "");
+        if (!nombre.includes(qTrab)) return false;
+      }
+
+      if (qRut) {
+        const rut = norm(e.trabajador?.rut || "");
+        if (!rut.includes(qRut)) return false;
+      }
+
+      if (qCentro) {
+        const centro = norm(e.centro || "");
+        if (!centro.includes(qCentro)) return false;
+      }
+
+      return true;
+    });
+  }, [entregas, fDesde, fHasta, fTrabajador, fRut, fCentro]);
 
   useEffect(() => {
     const fetchEntregas = async () => {
@@ -109,7 +160,7 @@ export default function EntregasPage() {
     fetchEntregas();
   }, []);
 
-  const entregasOrdenadas = [...entregas].sort((a, b) => {
+  const entregasOrdenadas = [...entregasFiltradas].sort((a, b) => {
     if (!ordenCampo) return 0;
 
     let aVal: any;
@@ -123,6 +174,10 @@ export default function EntregasPage() {
       case "trabajador":
         aVal = a.trabajador.nombre;
         bVal = b.trabajador.nombre;
+        break;
+      case "rut":
+        aVal = a.trabajador.rut;
+        bVal = b.trabajador.rut;
         break;
       case "centro":
         aVal = a.centro;
@@ -150,7 +205,7 @@ export default function EntregasPage() {
   });
 
   const handleOrden = (
-    campo: "fecha" | "trabajador" | "centro" | "total_unidades" | "costo_total_iva"
+    campo: "fecha" | "trabajador" | "rut" | "centro" | "total_unidades" | "costo_total_iva"
   ) => {
     if (ordenCampo === campo) {
       setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -167,31 +222,113 @@ export default function EntregasPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Entregas de EPP</h1>
-      <div className="flex justify-end">
-        <button
-          onClick={async () => {
-            const { data: auth } = await supabaseBrowser().auth.getUser();
-            if (!auth?.user) return;
+      <div className="rounded-lg border bg-white p-4">
+        <div className="grid gap-3 md:grid-cols-5">
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Desde</label>
+            <input
+              type="date"
+              value={fDesde}
+              onChange={(e) => setFDesde(e.target.value)}
+              className="input h-10"
+            />
+          </div>
 
-            const { data: usuario } = await supabaseBrowser()
-              .from("usuarios")
-              .select("empresa_id")
-              .eq("auth_user_id", auth.user.id)
-              .maybeSingle();
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Hasta</label>
+            <input
+              type="date"
+              value={fHasta}
+              onChange={(e) => setFHasta(e.target.value)}
+              className="input h-10"
+            />
+          </div>
 
-            if (!usuario?.empresa_id) return;
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Trabajador</label>
+            <input
+              value={fTrabajador}
+              onChange={(e) => setFTrabajador(e.target.value)}
+              placeholder="Nombre…"
+              className="input h-10"
+            />
+          </div>
 
-            const url = `/api/reportes/entregas-excel?empresa_id=${usuario.empresa_id}`;
-            window.location.href = url;
-          }}
-          className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-        >
-          Exportar Excel
-        </button>
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">RUT</label>
+            <input
+              value={fRut}
+              onChange={(e) => setFRut(e.target.value)}
+              placeholder="12.345.678-9…"
+              className="input h-10"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Centro</label>
+            <select
+              value={fCentro}
+              onChange={(e) => setFCentro(e.target.value)}
+              className="input h-10"
+            >
+              <option value="">Todos…</option>
+              {centrosDisponibles.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-zinc-500">
+            Mostrando <b>{entregasFiltradas.length}</b> de <b>{entregas.length}</b>
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setFDesde("");
+                setFHasta("");
+                setFTrabajador("");
+                setFRut("");
+                setFCentro("");
+              }}
+              className="rounded border px-4 py-2 text-sm font-medium hover:bg-zinc-50"
+            >
+              Limpiar
+            </button>
+
+            <button
+              onClick={async () => {
+                const { data: auth } = await supabaseBrowser().auth.getUser();
+                if (!auth?.user) return;
+
+                const { data: usuario } = await supabaseBrowser()
+                  .from("usuarios")
+                  .select("empresa_id")
+                  .eq("auth_user_id", auth.user.id)
+                  .maybeSingle();
+
+                if (!usuario?.empresa_id) return;
+
+                const url = `/api/reportes/entregas-excel?empresa_id=${usuario.empresa_id}`;
+                window.location.href = url;
+              }}
+              className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Exportar Excel
+            </button>
+          </div>
+        </div>
       </div>
 
       {entregas.length === 0 && (
         <p className="text-sm text-zinc-500">No hay entregas registradas.</p>
+      )}
+
+      {entregas.length > 0 && entregasFiltradas.length === 0 && (
+        <p className="text-sm text-zinc-500">No hay resultados para los filtros seleccionados.</p>
       )}
 
       {/* Mobile: cards */}
@@ -202,9 +339,8 @@ export default function EntregasPage() {
 
             <div className="mt-2">
               <div className="text-xs text-zinc-500">Trabajador</div>
-              <div className="font-medium text-zinc-900">
-                {e.trabajador.nombre} <span className="text-zinc-500">·</span> {e.trabajador.rut}
-              </div>
+              <div className="font-medium text-zinc-900">{e.trabajador.nombre}</div>
+              <div className="text-sm text-zinc-600">{e.trabajador.rut}</div>
             </div>
 
             <div className="mt-2">
@@ -264,6 +400,12 @@ export default function EntregasPage() {
                 Trabajador {ordenCampo === "trabajador" && (ordenDireccion === "asc" ? "▲" : "▼")}
               </th>
               <th
+                onClick={() => handleOrden("rut")}
+                className="cursor-pointer p-2 text-left"
+              >
+                RUT {ordenCampo === "rut" && (ordenDireccion === "asc" ? "▲" : "▼")}
+              </th>
+              <th
                 onClick={() => handleOrden("centro")}
                 className="cursor-pointer p-2 text-left"
               >
@@ -288,9 +430,8 @@ export default function EntregasPage() {
             {entregasOrdenadas.map((e) => (
               <tr key={e.id} className="border-t">
                 <td className="whitespace-nowrap p-2">{formatFechaCL(e.fecha)}</td>
-                <td className="p-2">
-                  {e.trabajador.nombre} · {e.trabajador.rut}
-                </td>
+                <td className="p-2">{e.trabajador.nombre}</td>
+                <td className="whitespace-nowrap p-2">{e.trabajador.rut}</td>
                 <td className="p-2">{e.centro}</td>
                 <td className="whitespace-nowrap p-2 text-right">{e.total_unidades}</td>
                 <td className="whitespace-nowrap p-2 text-right">{formatCLP(e.costo_total_iva)}</td>

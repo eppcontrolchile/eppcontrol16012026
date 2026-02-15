@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import PWARegister from "../PWARegister";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -67,6 +68,7 @@ export default async function MobileLayout({ children }: { children: ReactNode }
   // Layout ultra simple
   return (
     <div className="min-h-dvh bg-zinc-50">
+      <PWARegister />
       <div className="mx-auto max-w-md p-4">
         {children}
       </div>

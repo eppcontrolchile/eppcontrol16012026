@@ -2,7 +2,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 type Trabajador = {
@@ -59,6 +59,26 @@ export default function EntregaPage() {
   const [firmado, setFirmado] = useState<boolean>(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const pointerIdRef = useRef<number | null>(null);
+
+  const fetchStockSafe = useCallback(async () => {
+    const stockResp = await fetch("/api/stock", { cache: "no-store" });
+    if (!stockResp.ok) {
+      setError("No se pudo cargar el stock.");
+      return;
+    }
+
+    const stockRaw = await stockResp.json().catch(() => []);
+    const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => ({
+      categoria: String(r?.categoria ?? ""),
+      nombre: String(r?.nombre ?? ""),
+      talla:
+        r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
+      stock: Number(r?.stock_total ?? r?.stock ?? 0),
+    }));
+
+    // Solo lo disponible
+    setStock(mapped.filter((s) => s.stock > 0));
+  }, []);
 
   // ─────────────────────────────────────────────
   // Load trabajadores activos + stock
@@ -147,23 +167,8 @@ export default function EntregaPage() {
         setCentros((centrosDB as any[])?.map((c) => ({ id: c.id, nombre: c.nombre })) ?? []);
 
         // Stock (desde API server)
-        const stockResp = await fetch("/api/stock", { cache: "no-store" });
-        if (!stockResp.ok) {
-          setError("No se pudo cargar el stock.");
-          setLoading(false);
-          return;
-        }
+        await fetchStockSafe();
 
-        const stockRaw = await stockResp.json().catch(() => []);
-        const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => ({
-          categoria: String(r?.categoria ?? ""),
-          nombre: String(r?.nombre ?? ""),
-          talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
-          stock: Number(r?.stock_total ?? r?.stock ?? 0),
-        }));
-
-        // Solo lo disponible
-        setStock(mapped.filter((s) => s.stock > 0));
         setError("");
         setLoading(false);
       } catch (e: any) {
@@ -174,6 +179,17 @@ export default function EntregaPage() {
 
     load();
   }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        fetchStockSafe().catch(() => {});
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [fetchStockSafe]);
 
   const categorias = useMemo(() => {
     return Array.from(new Set(stock.map((s) => s.categoria))).sort((a, b) => a.localeCompare(b));
@@ -469,6 +485,8 @@ export default function EntregaPage() {
         `Entrega registrada ✅\n\nUnidades: ${totalUnidades.toLocaleString("es-CL")}\nTotal: $${costoTotal.toLocaleString("es-CL")}`
       );
       setSuccessOpen(true);
+
+      await fetchStockSafe();
 
       setTrabajadorId("");
       setItems([{ categoria: "", epp: "", tallaNumero: "", cantidad: 1 }]);

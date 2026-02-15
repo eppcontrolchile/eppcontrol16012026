@@ -116,6 +116,13 @@ export default function DashboardShell({
   const [lastLoginAt, setLastLoginAt] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Close drawer on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
+
   const clearClientSessionArtifacts = () => {
     try {
       // Remove known app cache keys
@@ -262,8 +269,18 @@ export default function DashboardShell({
 
   return (
     <main className="min-h-screen bg-gray-50 flex">
-      {/* SIDEBAR */}
-      <aside className="w-60 bg-white border-r px-4 py-6">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Cerrar menú"
+          className="fixed inset-0 z-40 bg-black/30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* SIDEBAR (Desktop) */}
+      <aside className="hidden w-60 shrink-0 bg-white border-r px-4 py-6 md:block">
         <div className="flex items-center gap-3 mb-8">
           <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden">
             <img
@@ -448,15 +465,229 @@ export default function DashboardShell({
         </div>
       </aside>
 
+      {/* SIDEBAR (Mobile drawer) */}
+      <aside
+        className={`fixed left-0 top-0 z-50 h-dvh w-72 bg-white border-r px-4 py-6 md:hidden transform transition-transform duration-200 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+        aria-hidden={!sidebarOpen}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden">
+              <img
+                src={logoSrc}
+                alt={companyName ? `Logo ${companyName}` : "Logo empresa"}
+                className="h-full w-full object-contain"
+                onError={() => setLogoSrc(defaultLogo)}
+              />
+            </div>
+            <div className="leading-tight min-w-0">
+              <div className="font-semibold text-zinc-800 text-sm truncate">
+                {companyName || "Empresa"}
+              </div>
+              {!!companyRut && (
+                <div className="text-xs text-zinc-500 truncate">RUT: {companyRut}</div>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="rounded-md border px-2 py-1 text-sm"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Cerrar menú"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-1">
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${ROLE_BADGE_CLASS[rol]}`}
+            title={`Rol: ${ROLE_LABEL[rol]}`}
+          >
+            {ROLE_LABEL[rol]}
+          </span>
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${
+              isAdvanced
+                ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                : "bg-zinc-50 text-zinc-700 border-zinc-200"
+            }`}
+            title={`Plan: ${isAdvanced ? "Advanced" : "Standard"}`}
+          >
+            {isAdvanced ? "Advanced" : "Standard"}
+          </span>
+        </div>
+        <div className="mb-6 text-[11px] text-zinc-500">
+          Último acceso: {textOrDash(formatDateTimeSantiago(lastLoginAt))}
+        </div>
+
+        <nav className="space-y-2 text-sm">
+          {!isSoloEntrega && (
+            <button
+              onClick={() => router.push("/dashboard")}
+              className={navBtnClass(isActive("/dashboard"))}
+              aria-current={isActive("/dashboard") ? "page" : undefined}
+            >
+              <span aria-hidden>🏠</span>
+              <span>Dashboard</span>
+            </button>
+          )}
+
+          {canSeeStock && (
+            <button
+              onClick={() => router.push("/dashboard/stock")}
+              className={navBtnClass(isActive("/dashboard/stock"))}
+              aria-current={isActive("/dashboard/stock") ? "page" : undefined}
+            >
+              <span aria-hidden>📦</span>
+              <span>Stock</span>
+            </button>
+          )}
+
+          {canSeeIngreso && (
+            <button
+              onClick={() => router.push("/dashboard/ingreso")}
+              className={navBtnClass(isActive("/dashboard/ingreso"))}
+              aria-current={isActive("/dashboard/ingreso") ? "page" : undefined}
+            >
+              <span aria-hidden>➕</span>
+              <span>Ingreso</span>
+            </button>
+          )}
+
+          {canSeeEgreso && (
+            <button
+              onClick={() => router.push("/dashboard/egreso")}
+              className={navBtnClass(isActive("/dashboard/egreso"))}
+              aria-current={isActive("/dashboard/egreso") ? "page" : undefined}
+            >
+              <span aria-hidden>➖</span>
+              <span>Egreso</span>
+            </button>
+          )}
+
+          {canSeeEntregas && (
+            <button
+              onClick={() => router.push("/dashboard/entregas")}
+              className={navBtnClass(isActive("/dashboard/entregas"))}
+              aria-current={isActive("/dashboard/entregas") ? "page" : undefined}
+            >
+              <span aria-hidden>📑</span>
+              <span>Entregas</span>
+            </button>
+          )}
+
+          {canSeeGastos && (
+            <button
+              onClick={() => router.push("/dashboard/gastos")}
+              className={navBtnClass(isActive("/dashboard/gastos"))}
+              aria-current={isActive("/dashboard/gastos") ? "page" : undefined}
+            >
+              <span aria-hidden>📊</span>
+              <span>Gastos</span>
+            </button>
+          )}
+
+          {canSeeTrabajadores && (
+            <button
+              onClick={() => router.push("/dashboard/trabajadores")}
+              className={navBtnClass(isActive("/dashboard/trabajadores"))}
+              aria-current={isActive("/dashboard/trabajadores") ? "page" : undefined}
+            >
+              <span aria-hidden>👷</span>
+              <span>Trabajadores</span>
+            </button>
+          )}
+
+          {canSeeCentros && (
+            <button
+              onClick={() => router.push("/dashboard/centros")}
+              className={navBtnClass(isActive("/dashboard/centros"))}
+              aria-current={isActive("/dashboard/centros") ? "page" : undefined}
+            >
+              <span aria-hidden>🏭</span>
+              <span>Centros de trabajo</span>
+            </button>
+          )}
+
+          {canSeeUsuariosRoles && (
+            <button
+              onClick={() => router.push("/dashboard/usuarios")}
+              className={navBtnClass(isActive("/dashboard/usuarios"))}
+              aria-current={isActive("/dashboard/usuarios") ? "page" : undefined}
+            >
+              <span aria-hidden>👥</span>
+              <span>Usuarios y roles</span>
+            </button>
+          )}
+
+          {canSeeConfiguracion && (
+            <button
+              onClick={() => router.push("/dashboard/configuracion")}
+              className={navBtnClass(isActive("/dashboard/configuracion"))}
+              aria-current={isActive("/dashboard/configuracion") ? "page" : undefined}
+            >
+              <span aria-hidden>⚙️</span>
+              <span>Configuración</span>
+            </button>
+          )}
+          {canSeeSuscripcion && (
+            <button
+              onClick={() => router.push("/dashboard/suscripcion")}
+              className={navBtnClass(isActive("/dashboard/suscripcion"))}
+              aria-current={isActive("/dashboard/suscripcion") ? "page" : undefined}
+            >
+              <span aria-hidden>💳</span>
+              <span>Suscripción</span>
+            </button>
+          )}
+          {isGerencia && (
+            <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 p-2 text-xs text-violet-800">
+              Modo <b>Gerencia</b>: acceso de lectura (sin creación/edición).
+            </div>
+          )}
+          {isSoloEntrega && (
+            <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-600">
+              Modo <b>Solo entrega</b>: solo puedes registrar entregas.
+            </div>
+          )}
+        </nav>
+
+        <div className="mt-8">
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50"
+          >
+            {loggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
+          </button>
+        </div>
+      </aside>
+
       {/* CONTENIDO */}
-      <div className="flex-1">
-        <header className="px-8 py-4 bg-white shadow-sm">
-          <h1 className="text-lg font-semibold text-zinc-800">
-            {isSoloEntrega ? "Entrega" : titleFromPath}
-          </h1>
+      <div className="flex-1 min-w-0">
+        {/* Mobile header */}
+        <header className="sticky top-0 z-30 bg-white shadow-sm px-4 py-3 md:px-8 md:py-4">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="md:hidden rounded-md border px-3 py-2 text-sm"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Abrir menú"
+            >
+              ☰
+            </button>
+
+            <h1 className="text-base font-semibold text-zinc-800 md:text-lg">
+              {isSoloEntrega ? "Entrega" : titleFromPath}
+            </h1>
+          </div>
         </header>
 
-        <section className="p-8">{children}</section>
+        <section className="p-4 md:p-8">{children}</section>
       </div>
     </main>
   );
