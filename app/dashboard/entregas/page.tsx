@@ -8,6 +8,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 type Entrega = {
   id: string;
   fecha: string;
+  fecha_ts?: string | null;
   total_unidades: number;
   costo_total_iva: number;
   pdf_url: string | null;
@@ -128,6 +129,7 @@ export default function EntregasPage() {
         .select(`
           id,
           fecha_entrega,
+          created_at,
           total_unidades,
           costo_total_iva,
           pdf_url,
@@ -135,12 +137,14 @@ export default function EntregasPage() {
           centros_trabajo:centro_id ( nombre )
         `)
         .eq("empresa_id", usuario.empresa_id)
-        .order("fecha_entrega", { ascending: false });
+        .order("fecha_entrega", { ascending: false })
+        .order("created_at", { ascending: false });
 
       if (!error && data) {
         const entregasFormateadas: Entrega[] = data.map((e: any) => ({
           id: e.id,
           fecha: e.fecha_entrega,
+          fecha_ts: e.created_at ?? null,
           total_unidades: e.total_unidades,
           costo_total_iva: e.costo_total_iva,
           pdf_url: e.pdf_url ?? null,
@@ -165,10 +169,20 @@ export default function EntregasPage() {
     let bVal: any;
 
     switch (ordenCampo) {
-      case "fecha":
-        aVal = parseDateFlexible(a.fecha).getTime();
-        bVal = parseDateFlexible(b.fecha).getTime();
+      case "fecha": {
+        // Primary: fecha_entrega (date)
+        const aDate = parseDateFlexible(a.fecha).getTime();
+        const bDate = parseDateFlexible(b.fecha).getTime();
+
+        // Secondary: created_at (timestamp) to ensure "última" within same date
+        const aTs = a.fecha_ts ? Date.parse(a.fecha_ts) : 0;
+        const bTs = b.fecha_ts ? Date.parse(b.fecha_ts) : 0;
+
+        // Encode both into a tuple-like comparable structure
+        aVal = { date: aDate, ts: aTs };
+        bVal = { date: bDate, ts: bTs };
         break;
+      }
       case "trabajador":
         aVal = a.trabajador.nombre;
         bVal = b.trabajador.nombre;
@@ -191,6 +205,19 @@ export default function EntregasPage() {
         break;
       default:
         return 0;
+    }
+
+    if (
+      ordenCampo === "fecha" &&
+      aVal &&
+      bVal &&
+      typeof aVal === "object" &&
+      typeof bVal === "object"
+    ) {
+      if (aVal.date !== bVal.date) {
+        return ordenDireccion === "asc" ? aVal.date - bVal.date : bVal.date - aVal.date;
+      }
+      return ordenDireccion === "asc" ? aVal.ts - bVal.ts : bVal.ts - aVal.ts;
     }
 
     if (typeof aVal === "number" && typeof bVal === "number") {
