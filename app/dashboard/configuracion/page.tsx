@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabase/client";
 
 type EmpresaConfig = {
   id: string;
@@ -99,8 +98,6 @@ export default function ConfiguracionEmpresaPage() {
   }, [logoPreview, logoFile]);
 
   async function uploadCompanyLogo(file: File): Promise<string> {
-    if (!empresa?.id) throw new Error("Empresa no disponible");
-
     // Basic guardrails
     if (!file.type.startsWith("image/")) {
       throw new Error("El archivo debe ser una imagen");
@@ -110,30 +107,31 @@ export default function ConfiguracionEmpresaPage() {
       throw new Error("El logo no puede superar 2MB");
     }
 
-    const supabase = supabaseBrowser();
-    const bucket = "company-logos";
-    const ext = (file.name.split(".").pop() || "png").toLowerCase();
-    const safeExt = ext.length <= 5 ? ext : "png";
-    const path = `${empresa.id}/${Date.now()}.${safeExt}`;
+    const fd = new FormData();
+    fd.append("file", file);
 
-    const { error: uploadError } = await supabase.storage
-      .from(bucket)
-      .upload(path, file, {
-        upsert: true,
-        cacheControl: "3600",
-        contentType: file.type,
-      });
+    const res = await fetch("/api/empresa/logo-upload", {
+      method: "POST",
+      body: fd,
+    });
 
-    if (uploadError) {
-      throw new Error(uploadError.message || "No se pudo subir el logo");
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(json?.error || "No se pudo subir el logo");
     }
 
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    if (!data?.publicUrl) {
-      throw new Error("No se pudo obtener URL pública del logo");
+    // Endpoint returns { logo_url, empresa }
+    if (json?.empresa) {
+      setEmpresa(json.empresa);
     }
 
-    return data.publicUrl;
+    const url = String(json?.logo_url || "").trim();
+    if (!url) {
+      throw new Error("No se recibió la URL del logo");
+    }
+
+    return url;
   }
 
   async function onSave(e: React.FormEvent) {
@@ -167,12 +165,16 @@ export default function ConfiguracionEmpresaPage() {
       }
 
       const payload: any = {
-        logo_url: finalLogoUrl,
         email_alertas: correoAlertas.trim() || null,
         alertas_activas: alertasActivas,
         stock_critico_activo: stockCriticoActivo,
         frecuencia_alertas: frecuencia,
       };
+
+      // Si el usuario quitó el logo (sin archivo y sin URL), persistimos null vía PATCH
+      if (!logoFile && !finalLogoUrl) {
+        payload.logo_url = null;
+      }
 
       // regla: solo standard puede editar email_gerencia
       if (empresa?.plan_tipo === "standard") {
@@ -192,6 +194,8 @@ export default function ConfiguracionEmpresaPage() {
       }
 
       setEmpresa(json.empresa);
+      setLogoUrl(json.empresa?.logo_url ?? "");
+      setLogoFile(null);
     } catch (err: any) {
       setError(err?.message ?? "Error guardando");
     } finally {
@@ -287,6 +291,7 @@ export default function ConfiguracionEmpresaPage() {
                 type="button"
                 className="text-sm text-zinc-600 hover:text-zinc-900"
                 onClick={() => {
+                  setError("");
                   setLogoFile(null);
                   setLogoPreview("");
                   setLogoUrl("");

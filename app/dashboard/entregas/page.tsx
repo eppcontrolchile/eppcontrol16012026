@@ -53,8 +53,8 @@ export default function EntregasPage() {
   const [loading, setLoading] = useState(true);
 
   const [ordenCampo, setOrdenCampo] = useState<
-    "fecha" | "trabajador" | "rut" | "centro" | "total_unidades" | "costo_total_iva" | null
-  >(null);
+    "fecha" | "trabajador" | "rut" | "centro" | "total_unidades" | "costo_total_iva"
+  >("fecha");
   const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
 
   const [fDesde, setFDesde] = useState<string>("");
@@ -161,8 +161,6 @@ export default function EntregasPage() {
   }, []);
 
   const entregasOrdenadas = [...entregasFiltradas].sort((a, b) => {
-    if (!ordenCampo) return 0;
-
     let aVal: any;
     let bVal: any;
 
@@ -209,8 +207,15 @@ export default function EntregasPage() {
   ) => {
     if (ordenCampo === campo) {
       setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setOrdenCampo(campo);
+
+    // Defaults: newest/greater first for date and numeric columns; A→Z for text
+    if (campo === "fecha" || campo === "total_unidades" || campo === "costo_total_iva") {
+      setOrdenDireccion("desc");
     } else {
-      setOrdenCampo(campo);
       setOrdenDireccion("asc");
     }
   };
@@ -333,7 +338,7 @@ export default function EntregasPage() {
 
       {/* Mobile: cards */}
       <div className="space-y-3 md:hidden">
-        {entregas.map((e) => (
+        {entregasOrdenadas.map((e) => (
           <div key={e.id} className="rounded-lg border bg-white p-3">
             <div className="text-sm text-zinc-600">{formatFechaCL(e.fecha)}</div>
 
