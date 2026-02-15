@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
 
 type EmpresaConfig = {
   id: string;
@@ -32,6 +33,10 @@ export default function ConfiguracionEmpresaPage() {
 
   // form state
   const [logoUrl, setLogoUrl] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string>("");
+  const [logoUploading, setLogoUploading] = useState(false);
+
   const [alertasActivas, setAlertasActivas] = useState(false);
   const [stockCriticoActivo, setStockCriticoActivo] = useState(true);
   const [frecuencia, setFrecuencia] = useState<"diaria" | "semanal">("diaria");
@@ -79,6 +84,58 @@ export default function ConfiguracionEmpresaPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!logoFile) setLogoPreview(logoUrl || "");
+  }, [logoUrl, logoFile]);
+
+  useEffect(() => {
+    return () => {
+      if (logoPreview && logoFile) {
+        try {
+          URL.revokeObjectURL(logoPreview);
+        } catch {}
+      }
+    };
+  }, [logoPreview, logoFile]);
+
+  async function uploadCompanyLogo(file: File): Promise<string> {
+    if (!empresa?.id) throw new Error("Empresa no disponible");
+
+    // Basic guardrails
+    if (!file.type.startsWith("image/")) {
+      throw new Error("El archivo debe ser una imagen");
+    }
+    const maxBytes = 2 * 1024 * 1024; // 2MB
+    if (file.size > maxBytes) {
+      throw new Error("El logo no puede superar 2MB");
+    }
+
+    const supabase = supabaseBrowser();
+    const bucket = "company-logos";
+    const ext = (file.name.split(".").pop() || "png").toLowerCase();
+    const safeExt = ext.length <= 5 ? ext : "png";
+    const path = `${empresa.id}/${Date.now()}.${safeExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(path, file, {
+        upsert: true,
+        cacheControl: "3600",
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      throw new Error(uploadError.message || "No se pudo subir el logo");
+    }
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+    if (!data?.publicUrl) {
+      throw new Error("No se pudo obtener URL pública del logo");
+    }
+
+    return data.publicUrl;
+  }
+
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -96,8 +153,21 @@ export default function ConfiguracionEmpresaPage() {
     try {
       setSaving(true);
 
+      let finalLogoUrl: string | null = logoUrl.trim() || null;
+      if (logoFile) {
+        setLogoUploading(true);
+        try {
+          const uploadedUrl = await uploadCompanyLogo(logoFile);
+          finalLogoUrl = uploadedUrl;
+          setLogoUrl(uploadedUrl);
+          setLogoFile(null);
+        } finally {
+          setLogoUploading(false);
+        }
+      }
+
       const payload: any = {
-        logo_url: logoUrl.trim() || null,
+        logo_url: finalLogoUrl,
         email_alertas: correoAlertas.trim() || null,
         alertas_activas: alertasActivas,
         stock_critico_activo: stockCriticoActivo,
@@ -161,23 +231,74 @@ export default function ConfiguracionEmpresaPage() {
 
       <form onSubmit={onSave} className="space-y-6">
         {/* Logo */}
-        <div className="rounded-lg border bg-white p-4 space-y-2">
-          <h2 className="font-medium">Logo</h2>
-          <label className="text-sm text-zinc-600">URL del logo</label>
-          <input
-            className="input"
-            value={logoUrl}
-            onChange={(e) => setLogoUrl(e.target.value)}
-            placeholder="https://... o /logo.png"
-          />
-          {logoUrl ? (
-            <div className="mt-2 rounded border bg-zinc-50 p-3">
-              {/* preview simple */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={logoUrl} alt="Logo" className="h-12 w-auto" />
+        <div className="rounded-lg border bg-white p-4 space-y-3">
+          <div>
+            <h2 className="font-medium">Logo</h2>
+            <p className="text-xs text-zinc-500">
+              Sube un logo para reemplazar el actual. Recomendado: PNG/SVG, fondo transparente.
+            </p>
+          </div>
+
+          <div className="rounded border bg-zinc-50 p-4">
+            {logoPreview ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logoPreview} alt="Logo" className="h-16 w-auto" />
+                <div className="mt-2 text-[11px] text-zinc-500 break-all">
+                  {logoUrl ? "Logo configurado" : "Logo (vista previa)"}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500">Sin logo configurado.</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center rounded-lg border bg-white px-3 py-2 text-sm hover:bg-zinc-50">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setError("");
+                    setLogoFile(file);
+                    if (file) {
+                      const url = URL.createObjectURL(file);
+                      setLogoPreview(url);
+                    } else {
+                      setLogoPreview(logoUrl || "");
+                    }
+                  }}
+                />
+                Cambiar logo…
+              </label>
+
+              {logoFile && (
+                <span className="text-xs text-zinc-500 truncate max-w-[220px]" title={logoFile.name}>
+                  {logoFile.name}
+                </span>
+              )}
             </div>
-          ) : (
-            <p className="text-xs text-zinc-500">Sin logo configurado.</p>
+
+            {logoUrl && (
+              <button
+                type="button"
+                className="text-sm text-zinc-600 hover:text-zinc-900"
+                onClick={() => {
+                  setLogoFile(null);
+                  setLogoPreview("");
+                  setLogoUrl("");
+                }}
+              >
+                Quitar logo
+              </button>
+            )}
+          </div>
+
+          {(logoUploading || saving) && logoFile && (
+            <p className="text-xs text-zinc-500">Subiendo logo…</p>
           )}
         </div>
 

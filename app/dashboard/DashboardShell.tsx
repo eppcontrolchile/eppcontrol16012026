@@ -467,14 +467,15 @@ export default function DashboardShell({
 
       {/* SIDEBAR (Mobile drawer) */}
       <aside
-        className={`fixed left-0 top-0 z-50 h-dvh w-72 bg-white border-r px-4 py-6 md:hidden transform transition-transform duration-200 ${
+        className={`fixed left-0 top-0 z-50 h-dvh w-72 bg-white border-r md:hidden transform transition-transform duration-200 flex flex-col ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={!sidebarOpen}
       >
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden">
+        {/* Header fijo del drawer */}
+        <div className="flex items-center justify-between px-4 py-4 border-b bg-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-md border bg-white flex items-center justify-center overflow-hidden shrink-0">
               <img
                 src={logoSrc}
                 alt={companyName ? `Logo ${companyName}` : "Logo empresa"}
@@ -494,7 +495,7 @@ export default function DashboardShell({
 
           <button
             type="button"
-            className="rounded-md border px-2 py-1 text-sm"
+            className="p-2 rounded-md hover:bg-gray-100 transition"
             onClick={() => setSidebarOpen(false)}
             aria-label="Cerrar menú"
           >
@@ -502,168 +503,172 @@ export default function DashboardShell({
           </button>
         </div>
 
-        <div className="mb-4 flex flex-wrap gap-1">
-          <span
-            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${ROLE_BADGE_CLASS[rol]}`}
-            title={`Rol: ${ROLE_LABEL[rol]}`}
-          >
-            {ROLE_LABEL[rol]}
-          </span>
-          <span
-            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${
-              isAdvanced
-                ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                : "bg-zinc-50 text-zinc-700 border-zinc-200"
-            }`}
-            title={`Plan: ${isAdvanced ? "Advanced" : "Standard"}`}
-          >
-            {isAdvanced ? "Advanced" : "Standard"}
-          </span>
-        </div>
-        <div className="mb-6 text-[11px] text-zinc-500">
-          Último acceso: {textOrDash(formatDateTimeSantiago(lastLoginAt))}
-        </div>
-
-        <nav className="space-y-2 text-sm">
-          {!isSoloEntrega && (
-            <button
-              onClick={() => router.push("/dashboard")}
-              className={navBtnClass(isActive("/dashboard"))}
-              aria-current={isActive("/dashboard") ? "page" : undefined}
+        {/* Contenido scrolleable */}
+        <div className="flex-1 overflow-y-auto px-4 py-6">
+          <div className="mb-4 flex flex-wrap gap-1">
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${ROLE_BADGE_CLASS[rol]}`}
+              title={`Rol: ${ROLE_LABEL[rol]}`}
             >
-              <span aria-hidden>🏠</span>
-              <span>Dashboard</span>
-            </button>
-          )}
-
-          {canSeeStock && (
-            <button
-              onClick={() => router.push("/dashboard/stock")}
-              className={navBtnClass(isActive("/dashboard/stock"))}
-              aria-current={isActive("/dashboard/stock") ? "page" : undefined}
+              {ROLE_LABEL[rol]}
+            </span>
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${
+                isAdvanced
+                  ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                  : "bg-zinc-50 text-zinc-700 border-zinc-200"
+              }`}
+              title={`Plan: ${isAdvanced ? "Advanced" : "Standard"}`}
             >
-              <span aria-hidden>📦</span>
-              <span>Stock</span>
-            </button>
-          )}
+              {isAdvanced ? "Advanced" : "Standard"}
+            </span>
+          </div>
 
-          {canSeeIngreso && (
-            <button
-              onClick={() => router.push("/dashboard/ingreso")}
-              className={navBtnClass(isActive("/dashboard/ingreso"))}
-              aria-current={isActive("/dashboard/ingreso") ? "page" : undefined}
-            >
-              <span aria-hidden>➕</span>
-              <span>Ingreso</span>
-            </button>
-          )}
+          <div className="mb-6 text-[11px] text-zinc-500">
+            Último acceso: {textOrDash(formatDateTimeSantiago(lastLoginAt))}
+          </div>
 
-          {canSeeEgreso && (
-            <button
-              onClick={() => router.push("/dashboard/egreso")}
-              className={navBtnClass(isActive("/dashboard/egreso"))}
-              aria-current={isActive("/dashboard/egreso") ? "page" : undefined}
-            >
-              <span aria-hidden>➖</span>
-              <span>Egreso</span>
-            </button>
-          )}
+          <nav className="space-y-2 text-sm">
+            {!isSoloEntrega && (
+              <button
+                onClick={() => router.push("/dashboard")}
+                className={navBtnClass(isActive("/dashboard"))}
+                aria-current={isActive("/dashboard") ? "page" : undefined}
+              >
+                <span aria-hidden>🏠</span>
+                <span>Dashboard</span>
+              </button>
+            )}
 
-          {canSeeEntregas && (
-            <button
-              onClick={() => router.push("/dashboard/entregas")}
-              className={navBtnClass(isActive("/dashboard/entregas"))}
-              aria-current={isActive("/dashboard/entregas") ? "page" : undefined}
-            >
-              <span aria-hidden>📑</span>
-              <span>Entregas</span>
-            </button>
-          )}
+            {canSeeStock && (
+              <button
+                onClick={() => router.push("/dashboard/stock")}
+                className={navBtnClass(isActive("/dashboard/stock"))}
+                aria-current={isActive("/dashboard/stock") ? "page" : undefined}
+              >
+                <span aria-hidden>📦</span>
+                <span>Stock</span>
+              </button>
+            )}
 
-          {canSeeGastos && (
-            <button
-              onClick={() => router.push("/dashboard/gastos")}
-              className={navBtnClass(isActive("/dashboard/gastos"))}
-              aria-current={isActive("/dashboard/gastos") ? "page" : undefined}
-            >
-              <span aria-hidden>📊</span>
-              <span>Gastos</span>
-            </button>
-          )}
+            {canSeeIngreso && (
+              <button
+                onClick={() => router.push("/dashboard/ingreso")}
+                className={navBtnClass(isActive("/dashboard/ingreso"))}
+                aria-current={isActive("/dashboard/ingreso") ? "page" : undefined}
+              >
+                <span aria-hidden>➕</span>
+                <span>Ingreso</span>
+              </button>
+            )}
 
-          {canSeeTrabajadores && (
-            <button
-              onClick={() => router.push("/dashboard/trabajadores")}
-              className={navBtnClass(isActive("/dashboard/trabajadores"))}
-              aria-current={isActive("/dashboard/trabajadores") ? "page" : undefined}
-            >
-              <span aria-hidden>👷</span>
-              <span>Trabajadores</span>
-            </button>
-          )}
+            {canSeeEgreso && (
+              <button
+                onClick={() => router.push("/dashboard/egreso")}
+                className={navBtnClass(isActive("/dashboard/egreso"))}
+                aria-current={isActive("/dashboard/egreso") ? "page" : undefined}
+              >
+                <span aria-hidden>➖</span>
+                <span>Egreso</span>
+              </button>
+            )}
 
-          {canSeeCentros && (
-            <button
-              onClick={() => router.push("/dashboard/centros")}
-              className={navBtnClass(isActive("/dashboard/centros"))}
-              aria-current={isActive("/dashboard/centros") ? "page" : undefined}
-            >
-              <span aria-hidden>🏭</span>
-              <span>Centros de trabajo</span>
-            </button>
-          )}
+            {canSeeEntregas && (
+              <button
+                onClick={() => router.push("/dashboard/entregas")}
+                className={navBtnClass(isActive("/dashboard/entregas"))}
+                aria-current={isActive("/dashboard/entregas") ? "page" : undefined}
+              >
+                <span aria-hidden>📑</span>
+                <span>Entregas</span>
+              </button>
+            )}
 
-          {canSeeUsuariosRoles && (
-            <button
-              onClick={() => router.push("/dashboard/usuarios")}
-              className={navBtnClass(isActive("/dashboard/usuarios"))}
-              aria-current={isActive("/dashboard/usuarios") ? "page" : undefined}
-            >
-              <span aria-hidden>👥</span>
-              <span>Usuarios y roles</span>
-            </button>
-          )}
+            {canSeeGastos && (
+              <button
+                onClick={() => router.push("/dashboard/gastos")}
+                className={navBtnClass(isActive("/dashboard/gastos"))}
+                aria-current={isActive("/dashboard/gastos") ? "page" : undefined}
+              >
+                <span aria-hidden>📊</span>
+                <span>Gastos</span>
+              </button>
+            )}
 
-          {canSeeConfiguracion && (
-            <button
-              onClick={() => router.push("/dashboard/configuracion")}
-              className={navBtnClass(isActive("/dashboard/configuracion"))}
-              aria-current={isActive("/dashboard/configuracion") ? "page" : undefined}
-            >
-              <span aria-hidden>⚙️</span>
-              <span>Configuración</span>
-            </button>
-          )}
-          {canSeeSuscripcion && (
-            <button
-              onClick={() => router.push("/dashboard/suscripcion")}
-              className={navBtnClass(isActive("/dashboard/suscripcion"))}
-              aria-current={isActive("/dashboard/suscripcion") ? "page" : undefined}
-            >
-              <span aria-hidden>💳</span>
-              <span>Suscripción</span>
-            </button>
-          )}
-          {isGerencia && (
-            <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 p-2 text-xs text-violet-800">
-              Modo <b>Gerencia</b>: acceso de lectura (sin creación/edición).
-            </div>
-          )}
-          {isSoloEntrega && (
-            <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-600">
-              Modo <b>Solo entrega</b>: solo puedes registrar entregas.
-            </div>
-          )}
-        </nav>
+            {canSeeTrabajadores && (
+              <button
+                onClick={() => router.push("/dashboard/trabajadores")}
+                className={navBtnClass(isActive("/dashboard/trabajadores"))}
+                aria-current={isActive("/dashboard/trabajadores") ? "page" : undefined}
+              >
+                <span aria-hidden>👷</span>
+                <span>Trabajadores</span>
+              </button>
+            )}
 
-        <div className="mt-8">
-          <button
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50"
-          >
-            {loggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
-          </button>
+            {canSeeCentros && (
+              <button
+                onClick={() => router.push("/dashboard/centros")}
+                className={navBtnClass(isActive("/dashboard/centros"))}
+                aria-current={isActive("/dashboard/centros") ? "page" : undefined}
+              >
+                <span aria-hidden>🏭</span>
+                <span>Centros de trabajo</span>
+              </button>
+            )}
+
+            {canSeeUsuariosRoles && (
+              <button
+                onClick={() => router.push("/dashboard/usuarios")}
+                className={navBtnClass(isActive("/dashboard/usuarios"))}
+                aria-current={isActive("/dashboard/usuarios") ? "page" : undefined}
+              >
+                <span aria-hidden>👥</span>
+                <span>Usuarios y roles</span>
+              </button>
+            )}
+
+            {canSeeConfiguracion && (
+              <button
+                onClick={() => router.push("/dashboard/configuracion")}
+                className={navBtnClass(isActive("/dashboard/configuracion"))}
+                aria-current={isActive("/dashboard/configuracion") ? "page" : undefined}
+              >
+                <span aria-hidden>⚙️</span>
+                <span>Configuración</span>
+              </button>
+            )}
+            {canSeeSuscripcion && (
+              <button
+                onClick={() => router.push("/dashboard/suscripcion")}
+                className={navBtnClass(isActive("/dashboard/suscripcion"))}
+                aria-current={isActive("/dashboard/suscripcion") ? "page" : undefined}
+              >
+                <span aria-hidden>💳</span>
+                <span>Suscripción</span>
+              </button>
+            )}
+            {isGerencia && (
+              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 p-2 text-xs text-violet-800">
+                Modo <b>Gerencia</b>: acceso de lectura (sin creación/edición).
+              </div>
+            )}
+            {isSoloEntrega && (
+              <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-600">
+                Modo <b>Solo entrega</b>: solo puedes registrar entregas.
+              </div>
+            )}
+          </nav>
+
+          <div className="mt-8">
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50"
+            >
+              {loggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
+            </button>
+          </div>
         </div>
       </aside>
 

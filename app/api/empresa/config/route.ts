@@ -18,6 +18,13 @@ function isValidFrecuencia(v: unknown): v is Frecuencia {
   return v === "diaria" || v === "semanal";
 }
 
+function isValidLogoUrl(v: unknown) {
+  const s = String(v ?? "").trim();
+  if (!s) return true; // allow clearing
+  // allow absolute http(s) URLs and same-origin relative paths
+  return s.startsWith("https://") || s.startsWith("http://") || s.startsWith("/");
+}
+
 export async function GET() {
   const cookieStore = await cookies();
 
@@ -153,7 +160,15 @@ export async function PATCH(req: Request) {
 
     // logo_url (opcional)
     if ("logo_url" in body) {
-      patch.logo_url = String(body.logo_url ?? "").trim() || null;
+      if (!isValidLogoUrl(body.logo_url)) {
+        return NextResponse.json({ error: "logo_url inválido" }, { status: 400 });
+      }
+      const v = String(body.logo_url ?? "").trim();
+      // guard against absurdly long strings
+      if (v.length > 2048) {
+        return NextResponse.json({ error: "logo_url demasiado largo" }, { status: 400 });
+      }
+      patch.logo_url = v || null;
     }
 
     // alertas stock
@@ -192,6 +207,22 @@ export async function PATCH(req: Request) {
       // si es advanced: ignoramos cualquier intento de update
     }
 
+    if (Object.keys(patch).length === 0) {
+      const { data: empresaActual, error: eerr } = await supabaseAdmin
+        .from("empresas")
+        .select(
+          "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia"
+        )
+        .eq("id", urow.empresa_id)
+        .single();
+
+      if (eerr || !empresaActual) {
+        return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
+      }
+
+      return NextResponse.json({ empresa: empresaActual });
+    }
+
     const { data: updated, error: upErr } = await supabaseAdmin
       .from("empresas")
       .update(patch)
@@ -210,4 +241,8 @@ export async function PATCH(req: Request) {
     console.error("EMPRESA CONFIG PATCH ERROR", e);
     return NextResponse.json({ error: e?.message ?? "Error" }, { status: 500 });
   }
+}
+
+export async function POST(req: Request) {
+  return PATCH(req);
 }

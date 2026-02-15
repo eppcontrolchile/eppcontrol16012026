@@ -57,6 +57,37 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 // ─────────────────────────────────────────────
 // Helper formatting/drawing functions for PDF
 // ─────────────────────────────────────────────
+function addImageContain(
+  doc: jsPDF,
+  dataUrl: string,
+  fmt: "PNG" | "JPEG",
+  x: number,
+  y: number,
+  maxW: number,
+  maxH: number
+) {
+  try {
+    // jsPDF can read intrinsic dimensions from the data URL
+    const props = (doc as any).getImageProperties
+      ? (doc as any).getImageProperties(dataUrl)
+      : null;
+
+    const iw = props?.width || maxW;
+    const ih = props?.height || maxH;
+
+    const scale = Math.min(maxW / iw, maxH / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+
+    const dx = x + (maxW - w) / 2;
+    const dy = y + (maxH - h) / 2;
+
+    doc.addImage(dataUrl, fmt as any, dx, dy, w, h);
+  } catch {
+    // Fallback: behave as before (may stretch)
+    doc.addImage(dataUrl, fmt as any, x, y, maxW, maxH);
+  }
+}
 function formatRut(rut: string): string {
   return (rut || "").trim();
 }
@@ -190,10 +221,10 @@ export async function generarPdfEntrega(params: {
 
   const headerTop = y + 6;
 
-  // Logo empresa (si no hay, usar logo EPP Control por defecto)
-  const logoW = 32;
-  const logoH = 16;
-  const logoX = rightX - logoW - 2;
+  // Logo box (we will fit the image inside without distorting)
+  const logoBoxW = 32;
+  const logoBoxH = 16;
+  const logoX = rightX - logoBoxW - 2;
   const logoY = headerTop - 3;
 
   let headerLogoDataUrl: string | null = null;
@@ -219,12 +250,13 @@ export async function generarPdfEntrega(params: {
   }
 
   if (headerLogoDataUrl) {
-    const fmt =
+    const fmt: "PNG" | "JPEG" =
       headerLogoDataUrl.includes("data:image/jpeg") ||
       headerLogoDataUrl.includes("data:image/jpg")
         ? "JPEG"
         : "PNG";
-    doc.addImage(headerLogoDataUrl, fmt as any, logoX, logoY, logoW, logoH);
+
+    addImageContain(doc, headerLogoDataUrl, fmt, logoX, logoY, logoBoxW, logoBoxH);
   }
 
   // Header typography
@@ -442,7 +474,7 @@ export async function generarPdfEntrega(params: {
     const footerY = doc.internal.pageSize.getHeight() - 40;
     // Logo EPP Control centrado
     if (isDataImageUrl(eppLogoDataUrl)) {
-      doc.addImage(eppLogoDataUrl, "PNG", pageWidth / 2 - 12, footerY + 1, 24, 10);
+      addImageContain(doc, eppLogoDataUrl, "PNG", pageWidth / 2 - 12, footerY + 1, 24, 10);
     }
 
     doc.setTextColor(110);
