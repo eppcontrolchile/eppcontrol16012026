@@ -48,14 +48,42 @@ export async function POST(req: Request) {
     // Ajusta nombres si tu tabla difiere (pero en tu proyecto suele ser 'usuarios')
     const admin = getAdminClient();
 
-    const { data: urow, error: uerr } = await admin
-      .from("usuarios")
-      .select("id, empresa_id, rol, activo")
-      .eq("id", userId)
-      .single();
+    // 2) Leer empresa_id y rol desde tu tabla usuarios.
+    // En algunos esquemas el auth UID no coincide con `usuarios.id` (puede estar en `user_id` o `auth_user_id`).
+    const tryCols: string[] = ["id", "user_id", "auth_user_id"]; // keep loose typing to avoid TS deep instantiation
 
-    if (uerr || !urow?.empresa_id) {
-      return NextResponse.json({ error: "Usuario no válido" }, { status: 403 });
+    let urow: { id: string; empresa_id: string; rol: string | null; activo: boolean | null } | null = null;
+    let lastErr: any = null;
+
+    // Supabase generics can trigger “excessively deep” inference when using dynamic column names.
+    // Use `any` for this small lookup block.
+    const usuarios: any = admin.from("usuarios");
+
+    for (const col of tryCols) {
+      const { data, error } = await usuarios
+        .select("id, empresa_id, rol, activo")
+        .eq(col, userId)
+        .maybeSingle();
+
+      if (error) {
+        lastErr = error;
+        continue;
+      }
+
+      if (data) {
+        urow = data as any;
+        break;
+      }
+    }
+
+    if (!urow?.empresa_id) {
+      return NextResponse.json(
+        {
+          error: "Usuario no válido",
+          detail: lastErr?.message || "No se encontró registro en usuarios para el usuario autenticado",
+        },
+        { status: 403 }
+      );
     }
 
     // Si manejas activo/inactivo
