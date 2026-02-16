@@ -28,6 +28,52 @@ function formatFechaCL(input?: string | null): string {
   return dt.toLocaleDateString("es-CL");
 }
 
+function normalizeRut(input: string) {
+  const s = (input || "").toString().trim().toUpperCase();
+  const clean = s.replace(/[^0-9K]/g, "");
+  if (clean.length < 2) return s.trim();
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  return `${body}-${dv}`;
+}
+
+function isRutLike(input: string) {
+  const r = normalizeRut(input);
+  return !r || /^[0-9]{7,8}-[0-9K]$/.test(r);
+}
+
+function todayYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatDocCompra(compra: any): string {
+  if (!compra) return "—";
+  const tipo = String(compra?.tipo_documento ?? "").trim();
+  const num = String(compra?.numero_documento ?? "").trim();
+  const label = tipo ? tipo.charAt(0).toUpperCase() + tipo.slice(1) : "Doc";
+  return num ? `${label} ${num}` : label;
+}
+
+function formatProveedorCompra(compra: any): string {
+  if (!compra) return "—";
+  const nombre = String(compra?.proveedor_nombre ?? "").trim();
+  const rut = String(compra?.proveedor_rut ?? "").trim();
+  if (nombre && rut) return `${nombre} (${rut})`;
+  return nombre || rut || "—";
+}
+
+function normSearch(v: any) {
+  return String(v ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 
 type IngresoItem = {
 categoria: string;
@@ -42,12 +88,24 @@ tipoIVA?: "IVA_INCLUIDO" | "MAS_IVA";
 type IngresoHistorialRow = {
   id: string;
   fecha: string;
+  created_at?: string | null;
+
   categoria: string;
   nombre: string;
   talla: string | null;
   cantidad: number;
   valorUnitario: number;
   total: number;
+
+  // compra (opcional)
+  compra?: {
+    id?: string;
+    tipo_documento?: string | null;
+    numero_documento?: string | null;
+    fecha_documento?: string | null;
+    proveedor_rut?: string | null;
+    proveedor_nombre?: string | null;
+  } | null;
 
   // control/auditoría
   anulado: boolean;
@@ -60,7 +118,15 @@ export default function IngresoPage() {
 const router = useRouter();
 const [fileKey, setFileKey] = useState<number>(Date.now());
 const [mensajeCarga, setMensajeCarga] = useState<string | null>(null);
-    
+
+// Documento de compra (cabecera)
+const [docTipo, setDocTipo] = useState<"factura" | "guia" | "oc" | "otro">("factura");
+const [docNumero, setDocNumero] = useState<string>("");
+const [docFecha, setDocFecha] = useState<string>(todayYMD());
+const [provRut, setProvRut] = useState<string>("");
+const [provNombre, setProvNombre] = useState<string>("");
+const [docMore, setDocMore] = useState(false);
+
 const [items, setItems] = useState<IngresoItem[]>([
   {
     categoria: "",
@@ -72,6 +138,7 @@ const [items, setItems] = useState<IngresoItem[]>([
 ]);
 
 const [historial, setHistorial] = useState<IngresoHistorialRow[]>([]);
+const [qHist, setQHist] = useState<string>("");
 
 // Orden por defecto: fecha DESC (más recientes arriba)
 const [ordenCampo, setOrdenCampo] = useState<keyof IngresoHistorialRow>("fecha");
@@ -79,6 +146,7 @@ const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
 
 const ITEMS_POR_HOJA = 20;
 const [pagina, setPagina] = useState(1);
+const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
 useEffect(() => {
   // Cargar historial desde API
@@ -108,6 +176,8 @@ useEffect(() => {
         return {
           id: String(r?.id ?? ""),
           fecha,
+          created_at: r?.created_at ?? null,
+          compra: r?.compra ?? null,
           categoria,
           nombre,
           talla,
@@ -131,11 +201,39 @@ useEffect(() => {
   fetchHistorial();
 }, []);
 
+const qNorm = normSearch(qHist);
+
+const historialFiltrado = qNorm
+  ? historial.filter((row) => {
+      const parts = [
+        row.fecha,
+        row.created_at,
+        row.categoria,
+        row.nombre,
+        row.talla,
+        row.cantidad,
+        row.valorUnitario,
+        row.total,
+        row.anulado ? "anulado" : "activo",
+        row.anulado_motivo,
+        // compra
+        row.compra?.tipo_documento,
+        row.compra?.numero_documento,
+        row.compra?.fecha_documento,
+        row.compra?.proveedor_rut,
+        row.compra?.proveedor_nombre,
+      ];
+
+      const hay = normSearch(parts.join(" "));
+      return hay.includes(qNorm);
+    })
+  : historial;
+
 const totalPaginas = Math.ceil(
-  historial.length / ITEMS_POR_HOJA
+  (historialFiltrado.length || 0) / ITEMS_POR_HOJA
 );
 
-const historialOrdenado = [...historial].sort((a, b) => {
+const historialOrdenado = [...historialFiltrado].sort((a, b) => {
   const campo = ordenCampo;
   if (!campo) return 0;
 
@@ -146,8 +244,16 @@ const historialOrdenado = [...historial].sort((a, b) => {
   if (campo === "fecha") {
     const at = parseDateFlexible(String(aVal ?? "")).getTime();
     const bt = parseDateFlexible(String(bVal ?? "")).getTime();
-    const diff = at - bt;
-    return ordenDireccion === "asc" ? diff : -diff;
+
+    if (at !== bt) {
+      const diff = at - bt;
+      return ordenDireccion === "asc" ? diff : -diff;
+    }
+
+    const aTs = a.created_at ? Date.parse(String(a.created_at)) : 0;
+    const bTs = b.created_at ? Date.parse(String(b.created_at)) : 0;
+    const diff2 = aTs - bTs;
+    return ordenDireccion === "asc" ? diff2 : -diff2;
   }
 
   // Números
@@ -209,6 +315,11 @@ const removeItem = (index: number) => {
 
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
+
+    if (provRut && !isRutLike(provRut)) {
+      alert("RUT proveedor inválido");
+      return;
+    }
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -280,13 +391,28 @@ const handleSubmit = async (e: React.FormEvent) => {
     const resp = await fetch("/api/stock/ingreso", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: itemsToSend }),
+      body: JSON.stringify({
+        compra: {
+          tipo: docTipo,
+          numero: docNumero.trim() || null,
+          fecha: docFecha || null,
+          proveedor_rut: provRut ? normalizeRut(provRut) : null,
+          proveedor_nombre: provNombre.trim() || null,
+        },
+        items: itemsToSend,
+      }),
     });
     if (!resp.ok) {
       const error = await resp.text();
       throw new Error(error || "Error al registrar ingreso");
     }
     alert("Ingreso registrado correctamente");
+    setDocTipo("factura");
+    setDocNumero("");
+    setProvRut("");
+    setProvNombre("");
+    setDocFecha(todayYMD());
+    setDocMore(false);
     router.push("/dashboard/stock");
   } catch (err: any) {
     alert(err.message || "Error al registrar ingreso");
@@ -329,9 +455,95 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     }
 
     try {
+      // --- Cabecera opcional de documento (aplica a TODO el archivo) ---
+      const tipoDocKey = ["Tipo doc", "Tipo documento", "Tipo", "Documento"];
+      const numDocKey = ["N° documento", "N° Doc", "Numero documento", "Número documento", "Nro documento", "Nro doc"];
+      const fechaDocKey = ["Fecha doc", "Fecha documento", "Fecha"];
+      const rutProvKey = ["RUT proveedor", "Rut proveedor", "RUT Proveedor", "Rut Proveedor"];
+      const provKey = ["Proveedor", "Proveedor (nombre)", "Razón social", "Razon social", "Nombre proveedor"];
+
+      const normalizeTipoDoc = (v: any) => {
+        const s = String(v ?? "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+        if (!s) return "";
+        if (s.includes("fact")) return "factura";
+        if (s.includes("guia")) return "guia";
+        if (s === "oc" || s.includes("orden") || s.includes("compra")) return "oc";
+        if (s.includes("otro")) return "otro";
+        // fallback conservador
+        return "factura";
+      };
+
+      const normalizeExcelDate = (v: any) => {
+        const s = String(v ?? "").trim();
+        if (!s) return "";
+        // Si el Excel trae fecha como Date, XLSX suele entregarlo como string o número.
+        // Aceptamos YYYY-MM-DD o intentamos parsear y formatear.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const dt = parseDateFlexible(s);
+        if (Number.isNaN(dt.getTime())) return "";
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, "0");
+        const d = String(dt.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      };
+
+      const firstNonEmpty = (cur: string, next: any) => {
+        const s = String(next ?? "").trim();
+        return cur || s;
+      };
+
+      let excelDocTipo = "";
+      let excelDocNumero = "";
+      let excelDocFecha = "";
+      let excelProvRut = "";
+      let excelProvNombre = "";
+
       const ingresosMasivos: any[] = [];
       rows.forEach((row, index) => {
         // Usar getCell para tolerar variantes de encabezado
+        // Cabecera opcional por fila (si viene repetida en cada fila, validamos consistencia)
+        const tipoDocRaw = getCell(row, tipoDocKey);
+        const numDocRaw = getCell(row, numDocKey);
+        const fechaDocRaw = getCell(row, fechaDocKey);
+        const rutProvRaw = getCell(row, rutProvKey);
+        const provRaw = getCell(row, provKey);
+
+        const tipoDocNorm = normalizeTipoDoc(tipoDocRaw);
+        const numDocNorm = String(numDocRaw ?? "").trim();
+        const fechaDocNorm = normalizeExcelDate(fechaDocRaw);
+        const rutProvNorm = rutProvRaw ? normalizeRut(String(rutProvRaw)) : "";
+        const provNorm = String(provRaw ?? "").trim();
+
+        // Tomar el primer valor no vacío y luego exigir consistencia si aparece otro valor distinto
+        const nextTipo = tipoDocRaw ? tipoDocNorm : "";
+        if (!excelDocTipo) excelDocTipo = nextTipo;
+        else if (nextTipo && nextTipo !== excelDocTipo) {
+          throw new Error(`Fila ${index + 2}: Tipo doc inconsistente ("${tipoDocRaw}")`);
+        }
+
+        if (!excelDocNumero) excelDocNumero = firstNonEmpty(excelDocNumero, numDocNorm);
+        else if (numDocNorm && numDocNorm !== excelDocNumero) {
+          throw new Error(`Fila ${index + 2}: N° documento inconsistente ("${numDocNorm}")`);
+        }
+
+        if (!excelDocFecha) excelDocFecha = firstNonEmpty(excelDocFecha, fechaDocNorm);
+        else if (fechaDocNorm && fechaDocNorm !== excelDocFecha) {
+          throw new Error(`Fila ${index + 2}: Fecha doc inconsistente ("${fechaDocNorm}")`);
+        }
+
+        if (!excelProvRut) excelProvRut = firstNonEmpty(excelProvRut, rutProvNorm);
+        else if (rutProvNorm && rutProvNorm !== excelProvRut) {
+          throw new Error(`Fila ${index + 2}: RUT proveedor inconsistente ("${rutProvNorm}")`);
+        }
+
+        if (!excelProvNombre) excelProvNombre = firstNonEmpty(excelProvNombre, provNorm);
+        else if (provNorm && provNorm !== excelProvNombre) {
+          throw new Error(`Fila ${index + 2}: Proveedor inconsistente ("${provNorm}")`);
+        }
         const categoriaRaw = getCell(row, ["Categoría", "Categoria"]);
         const categoria = categoriaRaw
           ? categoriaRaw
@@ -408,11 +620,31 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         });
       });
 
+      // Validación cabecera opcional
+      if (excelProvRut && !isRutLike(excelProvRut)) {
+        throw new Error(`RUT proveedor inválido en cabecera: ${excelProvRut}`);
+      }
+      if (excelDocFecha && !/^\d{4}-\d{2}-\d{2}$/.test(excelDocFecha)) {
+        throw new Error(`Fecha doc inválida en cabecera (usa YYYY-MM-DD): ${excelDocFecha}`);
+      }
+
       // Enviar a API
       const resp = await fetch("/api/stock/ingreso-masivo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: ingresosMasivos }),
+        body: JSON.stringify({
+          compra:
+            excelDocTipo || excelDocNumero || excelDocFecha || excelProvRut || excelProvNombre
+              ? {
+                  tipo: excelDocTipo || "factura",
+                  numero: excelDocNumero || null,
+                  fecha: excelDocFecha || null,
+                  proveedor_rut: excelProvRut || null,
+                  proveedor_nombre: excelProvNombre || null,
+                }
+              : null,
+          items: ingresosMasivos,
+        }),
       });
       if (!resp.ok) {
         const error = await resp.text();
@@ -473,6 +705,8 @@ const refrescarHistorial = async () => {
       return {
         id: String(r?.id ?? ""),
         fecha,
+        created_at: r?.created_at ?? null,
+        compra: r?.compra ?? null,
         categoria,
         nombre,
         talla,
@@ -576,12 +810,132 @@ const modificarIngreso = async (row: IngresoHistorialRow) => {
   await refrescarHistorial();
 };
 
+// Close dropdown when clicking outside
+useEffect(() => {
+  const onDocClick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("[data-actions-menu='1']")) return;
+    setOpenMenuId(null);
+  };
+  document.addEventListener("click", onDocClick);
+  return () => document.removeEventListener("click", onDocClick);
+}, []);
+
 return (
   <div className="max-w-2xl space-y-6">
     <h1 className="text-2xl font-semibold">Ingreso de EPP</h1>
 
     {/* INGRESO MANUAL */}
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Documento de compra */}
+      <div className="rounded-lg border bg-white p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-medium">Documento de compra</h2>
+            <p className="text-xs text-zinc-500">
+              Se aplicará a todos los EPP que agregues en este ingreso.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="text-sm text-zinc-600 underline"
+            onClick={() => {
+              setDocTipo("factura");
+              setDocNumero("");
+              setProvRut("");
+              setProvNombre("");
+              setDocFecha(todayYMD());
+              setDocMore(false);
+            }}
+          >
+            Limpiar
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          {([
+            { id: "factura", label: "Factura" },
+            { id: "guia", label: "Guía" },
+            { id: "oc", label: "OC" },
+            { id: "otro", label: "Otro" },
+          ] as const).map((opt) => (
+            <label key={opt.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="docTipo"
+                checked={docTipo === opt.id}
+                onChange={() => setDocTipo(opt.id)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">N° documento (recomendado)</label>
+            <input
+              value={docNumero}
+              onChange={(e) => setDocNumero(e.target.value)}
+              className="input"
+              placeholder="Ej: 12345"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">RUT proveedor (recomendado)</label>
+            <input
+              value={provRut}
+              onChange={(e) => setProvRut(e.target.value)}
+              onBlur={() => setProvRut(normalizeRut(provRut))}
+              className="input"
+              placeholder="12.345.678-9"
+            />
+            {!isRutLike(provRut) && (
+              <div className="mt-1 text-xs text-red-600">RUT inválido</div>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="text-sm text-zinc-600 underline"
+          onClick={() => setDocMore((v) => !v)}
+        >
+          {docMore ? "Ocultar" : "Más datos…"}
+        </button>
+
+        {docMore && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Fecha documento</label>
+              <input
+                type="date"
+                value={docFecha}
+                onChange={(e) => setDocFecha(e.target.value)}
+                className="input"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Proveedor (nombre / razón social)</label>
+              <input
+                value={provNombre}
+                onChange={(e) => setProvNombre(e.target.value)}
+                className="input"
+                placeholder="Opcional"
+              />
+            </div>
+          </div>
+        )}
+
+        {(docNumero || provRut) && items.length > 1 && (
+          <div className="rounded border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">
+            Estos datos se aplicarán a <b>{items.length}</b> ítems de EPP.
+          </div>
+        )}
+      </div>
       {items.map((item, index) => {
         const eppsDisponibles: string[] = [];
 
@@ -730,15 +1084,49 @@ return (
         </div>
 
       <p className="text-xs text-zinc-500">
-        Columnas esperadas (Excel): Categoría | Nombre EPP |{" "}
-        Talla/Número | Cantidad | Monto unitario |{" "}
-        Tipo IVA (IVA incluido / + IVA)
+        Columnas esperadas (Excel): Categoría | Nombre EPP | Talla/Número | Cantidad | Monto unitario | Tipo IVA
+        <span className="block mt-1">
+          Opcionales (documento de compra, se aplican a todo el archivo): Tipo doc | N° documento | Fecha doc (YYYY-MM-DD) | RUT proveedor | Proveedor
+        </span>
       </p>
     </div>
 
     <h2 className="text-xl font-semibold">
       Historial de ingresos de EPP
     </h2>
+
+    <div className="rounded border bg-white p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="w-full">
+          <label className="block text-xs text-zinc-500 mb-1">Buscar en historial</label>
+          <input
+            className="input"
+            value={qHist}
+            onChange={(e) => {
+              setQHist(e.target.value);
+              setPagina(1);
+            }}
+            placeholder="Buscar por fecha, EPP, categoría, proveedor, documento…"
+          />
+        </div>
+
+        <button
+          type="button"
+          className="sm:mt-5 rounded border px-3 py-2 text-sm disabled:opacity-40"
+          disabled={!qHist}
+          onClick={() => {
+            setQHist("");
+            setPagina(1);
+          }}
+        >
+          Limpiar
+        </button>
+      </div>
+
+      <div className="mt-2 text-xs text-zinc-500">
+        Mostrando {historialFiltrado.length} de {historial.length}
+      </div>
+    </div>
 
     <div className="overflow-x-auto rounded border">
       <table className="w-full border-collapse border border-slate-300 text-sm">
@@ -750,6 +1138,8 @@ return (
             >
               Fecha {ordenCampo === "fecha" && (ordenDireccion === "asc" ? "▲" : "▼")}
             </th>
+            <th className="border border-slate-300 p-2 text-left">Documento</th>
+            <th className="border border-slate-300 p-2 text-left">Proveedor</th>
             <th
               onClick={() => handleOrden("categoria")}
               className="cursor-pointer border border-slate-300 p-2 text-left"
@@ -776,25 +1166,25 @@ return (
             </th>
             <th
               onClick={() => handleOrden("valorUnitario")}
-              className="cursor-pointer border border-slate-300 p-2 text-right"
+              className="cursor-pointer border border-slate-300 p-2 text-right hidden md:table-cell"
             >
               Valor unitario ($ IVA incl.) {ordenCampo === "valorUnitario" && (ordenDireccion === "asc" ? "▲" : "▼")}
             </th>
             <th
               onClick={() => handleOrden("total")}
-              className="cursor-pointer border border-slate-300 p-2 text-right"
+              className="cursor-pointer border border-slate-300 p-2 text-right hidden md:table-cell"
             >
               Total {ordenCampo === "total" && (ordenDireccion === "asc" ? "▲" : "▼")}
             </th>
             <th className="border border-slate-300 p-2 text-left">Estado</th>
-            <th className="border border-slate-300 p-2 text-left">Acciones</th>
+            <th className="border border-slate-300 p-2 text-left whitespace-nowrap">Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {historial.length === 0 && (
+          {historialFiltrado.length === 0 && (
             <tr>
               <td
-                colSpan={9}
+                colSpan={11}
                 className="border border-slate-300 p-4 text-center text-zinc-500"
               >
                 No hay ingresos registrados
@@ -811,6 +1201,17 @@ return (
                 {formatFechaCL(row.fecha)}
               </td>
               <td className="p-2 border border-slate-300">
+                <div className="font-medium">{formatDocCompra(row.compra)}</div>
+                {row.compra?.fecha_documento ? (
+                  <div className="text-xs text-zinc-500">Doc: {formatFechaCL(row.compra.fecha_documento)}</div>
+                ) : null}
+              </td>
+              <td className="p-2 border border-slate-300">
+                <div className="truncate max-w-[260px]" title={formatProveedorCompra(row.compra)}>
+                  {formatProveedorCompra(row.compra)}
+                </div>
+              </td>
+              <td className="p-2 border border-slate-300">
                 {row.categoria}
               </td>
               <td className="p-2 border border-slate-300">
@@ -822,10 +1223,10 @@ return (
               <td className="p-2 border border-slate-300 text-right">
                 {row.cantidad}
               </td>
-              <td className="p-2 border border-slate-300 text-right">
+              <td className="p-2 border border-slate-300 text-right hidden md:table-cell">
                 {row.valorUnitario.toLocaleString("es-CL")}
               </td>
-              <td className="p-2 border border-slate-300 text-right">
+              <td className="p-2 border border-slate-300 text-right hidden md:table-cell">
                 {row.total.toLocaleString("es-CL")}
               </td>
               <td className="p-2 border border-slate-300">
@@ -842,26 +1243,55 @@ return (
               </td>
 
               <td className="p-2 border border-slate-300">
-                <div className="flex flex-col gap-2">
+                <div className="relative inline-flex" data-actions-menu="1">
                   <button
                     type="button"
-                    onClick={() => modificarIngreso(row)}
-                    disabled={!esEditable(row)}
-                    className="rounded border px-2 py-1 text-left disabled:opacity-40"
-                    title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Modificar"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuId((cur) => (cur === row.id ? null : row.id));
+                    }}
+                    className="rounded border px-2 py-1 text-sm hover:bg-zinc-50"
+                    aria-haspopup="menu"
+                    aria-expanded={openMenuId === row.id}
+                    title="Acciones"
                   >
-                    ✏️ Modificar
+                    ⋯
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => anularIngreso(row)}
-                    disabled={!esEditable(row)}
-                    className="rounded border px-2 py-1 text-left text-red-700 disabled:opacity-40"
-                    title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Anular"}
-                  >
-                    🧾 Anular
-                  </button>
+                  {openMenuId === row.id && (
+                    <div
+                      className="absolute right-0 top-full z-10 mt-1 w-44 overflow-hidden rounded border bg-white shadow"
+                      role="menu"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuId(null);
+                          modificarIngreso(row);
+                        }}
+                        disabled={!esEditable(row)}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 disabled:opacity-40"
+                        role="menuitem"
+                        title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Modificar"}
+                      >
+                        ✏️ Modificar
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuId(null);
+                          anularIngreso(row);
+                        }}
+                        disabled={!esEditable(row)}
+                        className="w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-zinc-50 disabled:opacity-40"
+                        role="menuitem"
+                        title={!esEditable(row) ? "Bloqueado: ya fue consumido" : "Anular"}
+                      >
+                        🧾 Anular
+                      </button>
+                    </div>
+                  )}
                 </div>
               </td>
             </tr>
@@ -883,7 +1313,7 @@ return (
           </button>
 
           <button
-            disabled={pagina === totalPaginas}
+            disabled={pagina === (totalPaginas || 1)}
             onClick={() => setPagina((p) => p + 1)}
             className="rounded border px-2 py-1 disabled:opacity-40"
           >

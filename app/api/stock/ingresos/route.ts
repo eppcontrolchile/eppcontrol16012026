@@ -75,17 +75,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
+  // Resolve empresa_id from usuario (schema confirmado: usuarios.auth_user_id)
   const { data: usuario, error: usuarioError } = await supabaseAdmin
     .from("usuarios")
-    .select("empresa_id")
+    .select("id, empresa_id")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
   if (usuarioError) {
     return NextResponse.json({ error: usuarioError.message }, { status: 500 });
   }
+
   if (!usuario?.empresa_id) {
-    return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Empresa no encontrada" },
+      { status: 404 }
+    );
   }
 
   const { data, error } = await supabaseAdmin
@@ -102,7 +107,52 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const res = NextResponse.json(data || [], { status: 200 });
+  // Enriquecer con compra (si existe) vía ingresos_compra_detalle -> ingresos_compra
+  const lotes = Array.isArray(data) ? data : [];
+  const loteIds = lotes.map((l: any) => l.id).filter(Boolean);
+
+  const compraPorLote = new Map<string, any>();
+
+  if (loteIds.length) {
+    try {
+      const { data: det, error: detErr } = await (supabaseAdmin as any)
+        .from("ingresos_compra_detalle")
+        .select(
+          `
+          lote_id,
+          compra:ingresos_compra (
+            id,
+            tipo_documento,
+            numero_documento,
+            fecha_documento,
+            proveedor_rut,
+            proveedor_nombre,
+            created_at
+          )
+        `
+        )
+        .in("lote_id", loteIds);
+
+      if (!detErr && Array.isArray(det)) {
+        for (const row of det) {
+          const lid = row?.lote_id;
+          const compra = row?.compra ?? null;
+          if (lid && compra && !compraPorLote.has(lid)) {
+            compraPorLote.set(lid, compra);
+          }
+        }
+      }
+    } catch {
+      // no romper el historial si falla la trazabilidad
+    }
+  }
+
+  const enriched = lotes.map((l: any) => ({
+    ...l,
+    compra: compraPorLote.get(l.id) ?? null,
+  }));
+
+  const res = NextResponse.json(enriched || [], { status: 200 });
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("X-Page-Limit", String(limit));
   res.headers.set("X-Page-Offset", String(offset));
