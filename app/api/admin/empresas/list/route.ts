@@ -69,21 +69,66 @@ export async function GET(req: NextRequest) {
   }
 
   // 2) Authorize: must be superadmin
-  const { data: urow, error: uerr } = await supabaseAdmin
+  // Prefer lookup by auth_user_id, but fallback to email (and self-heal) if needed.
+  let urow: { id: string; rol: string | null; activo: boolean } | null = null;
+
+  const byAuth = await supabaseAdmin
     .from("usuarios")
-    .select("id, rol, activo")
+    .select("id, rol, activo, auth_user_id, email")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
-  if (uerr) {
-    return NextResponse.json({ error: uerr.message }, { status: 500 });
+  if (byAuth.error) {
+    return NextResponse.json({ error: byAuth.error.message }, { status: 500 });
   }
 
-  if (!urow?.activo) {
+  if (byAuth.data?.id) {
+    urow = {
+      id: String((byAuth.data as any).id),
+      rol: ((byAuth.data as any).rol ?? null) as any,
+      activo: !!(byAuth.data as any).activo,
+    };
+  } else {
+    const email = String(user.email ?? "").trim().toLowerCase();
+    if (email) {
+      const byEmail = await supabaseAdmin
+        .from("usuarios")
+        .select("id, rol, activo, auth_user_id, email")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (byEmail.error) {
+        return NextResponse.json({ error: byEmail.error.message }, { status: 500 });
+      }
+
+      if (byEmail.data?.id) {
+        // Self-heal: if the row isn't linked to auth_user_id yet, link it.
+        const existingAuthUserId = (byEmail.data as any).auth_user_id;
+        if (!existingAuthUserId) {
+          await supabaseAdmin
+            .from("usuarios")
+            .update({ auth_user_id: user.id })
+            .eq("id", (byEmail.data as any).id);
+        }
+
+        urow = {
+          id: String((byEmail.data as any).id),
+          rol: ((byEmail.data as any).rol ?? null) as any,
+          activo: !!(byEmail.data as any).activo,
+        };
+      }
+    }
+  }
+
+  if (!urow) {
+    return NextResponse.json({ error: "No se pudo validar el usuario" }, { status: 403 });
+  }
+
+  if (!urow.activo) {
     return NextResponse.json({ error: "Usuario inactivo" }, { status: 403 });
   }
 
-  if (String(urow?.rol ?? "").toLowerCase() !== "superadmin") {
+  if (String(urow.rol ?? "").toLowerCase() !== "superadmin") {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 

@@ -16,7 +16,7 @@ type Usuario = {
   id: string;
   nombre: string;
   email: string;
-  rol: string;
+  rol: string | null;
   activo: boolean;
 };
 
@@ -92,14 +92,17 @@ export default function AdminPage() {
           return;
         }
 
-        // Soporta ambos formatos:
-        // A) API devuelve array directo: [...]
-        // B) API devuelve wrapper: { ok: true, rows: [...] }
+        // Soporta formatos:
+        // A) array directo: [...]
+        // B) wrapper: { ok:true, rows:[...] }
+        // C) wrapper alternativo: { ok:true, empresas:[...] }
         const rows: Empresa[] = Array.isArray(data)
           ? (data as Empresa[])
           : Array.isArray(data?.rows)
             ? (data.rows as Empresa[])
-            : [];
+            : Array.isArray(data?.empresas)
+              ? (data.empresas as Empresa[])
+              : [];
 
         setEmpresas(rows);
         setError("");
@@ -142,8 +145,15 @@ export default function AdminPage() {
 
       const data = await resp.json().catch(() => null);
 
-      // Soporta array directo o wrapper { ok:true, usuarios:[...] }
-      const usuariosArr = Array.isArray(data) ? data : (data?.usuarios ?? []);
+      // Soporta array directo o wrappers: { ok:true, usuarios:[...] } / { ok:true, rows:[...] }
+      const usuariosArr: unknown = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.usuarios)
+          ? data.usuarios
+          : Array.isArray(data?.rows)
+            ? data.rows
+            : [];
+
       if (!Array.isArray(usuariosArr)) {
         setUsuarios([]);
         setUsuarioId("");
