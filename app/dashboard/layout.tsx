@@ -1,6 +1,7 @@
 // app/dashboard/layout.tsx
 import type { ReactNode } from "react";
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -50,6 +51,26 @@ export default async function DashboardLayout({
   // cookies() es async en Next 16
   const cookieStore = await cookies();
 
+  // ─────────────────────────────────────────────
+  // 🔐 Modo soporte (impersonación)
+  // Cookie httpOnly: epp_impersonate = base64url(JSON { empresa_id, usuario_id })
+  // ─────────────────────────────────────────────
+  let impersonatedEmpresaId: string | null = null;
+  let impersonatedUsuarioId: string | null = null;
+
+  const impCookie = cookieStore.get("epp_impersonate")?.value;
+  if (impCookie) {
+    try {
+      const decoded = JSON.parse(Buffer.from(impCookie, "base64url").toString("utf8"));
+      if (decoded?.empresa_id && decoded?.usuario_id) {
+        impersonatedEmpresaId = String(decoded.empresa_id);
+        impersonatedUsuarioId = String(decoded.usuario_id);
+      }
+    } catch {
+      // cookie corrupta → ignorar
+    }
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -80,44 +101,83 @@ export default async function DashboardLayout({
     redirect("/auth/login");
   }
 
-  // 2) Resolver usuario interno: primario por auth_user_id, fallback por email
-  const { data: usuarioByAuth, error: usuarioAuthErr } = await supabase
-    .from("usuarios")
-    .select("id, rol, empresa_id, email, auth_user_id, activo")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+  // 2) Resolver usuario interno
+  // - Normal: primario por auth_user_id, fallback por email
+  // - Soporte: si existe cookie epp_impersonate, resolvemos por usuarios.id (impersonatedUsuarioId)
 
-  let usuario = usuarioByAuth as any;
+  let usuario: any = null;
+  let usuarioAuthErr: any = null;
 
-  // Fallback: invitaciones/recovery pueden tener auth_user_id null en tabla usuarios
+  if (impersonatedUsuarioId) {
+    // En modo soporte usamos service-role para evitar RLS/mismatch de empresa.
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      redirectToRegister("missing_service_role");
+    }
+
+    const admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const { data: impUser, error: impErr } = await admin
+      .from("usuarios")
+      .select("id, rol, empresa_id, email, auth_user_id, activo")
+      .eq("id", impersonatedUsuarioId)
+      .maybeSingle();
+
+    usuarioAuthErr = impErr;
+    usuario = impUser as any;
+
+    // Si además venía empresa_id en la cookie, forzamos consistencia.
+    if (usuario?.empresa_id && impersonatedEmpresaId && String(usuario.empresa_id) !== String(impersonatedEmpresaId)) {
+      // Cookie inconsistente: ignora impersonación para no quedar en loop.
+      impersonatedEmpresaId = null;
+      impersonatedUsuarioId = null;
+      usuario = null;
+      usuarioAuthErr = null;
+    }
+  }
+
   if (!usuario?.id) {
-    const email = (user.email || "").trim().toLowerCase();
+    const { data: usuarioByAuth, error: authErr2 } = await supabase
+      .from("usuarios")
+      .select("id, rol, empresa_id, email, auth_user_id, activo")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
-    if (email) {
-      const { data: usuarioByEmail, error: usuarioEmailErr } = await supabase
-        .from("usuarios")
-        .select("id, rol, empresa_id, email, auth_user_id, activo")
-        .eq("email", email)
-        .maybeSingle();
+    usuarioAuthErr = authErr2;
+    usuario = usuarioByAuth as any;
 
-      if (usuarioEmailErr) {
-        // Usuario autenticado pero sin fila interna resolvible
-        redirectToRegister("missing_usuario_by_email");
-      }
+    // Fallback: invitaciones/recovery pueden tener auth_user_id null en tabla usuarios
+    if (!usuario?.id) {
+      const email = (user.email || "").trim().toLowerCase();
 
-      if (usuarioByEmail?.id) {
-        // Intentamos linkear auth_user_id si falta (si RLS lo permite)
-        if (!usuarioByEmail.auth_user_id) {
-          const { error: linkErr } = await supabase
-            .from("usuarios")
-            .update({ auth_user_id: user.id })
-            .eq("id", usuarioByEmail.id);
+      if (email) {
+        const { data: usuarioByEmail, error: usuarioEmailErr } = await supabase
+          .from("usuarios")
+          .select("id, rol, empresa_id, email, auth_user_id, activo")
+          .eq("email", email)
+          .maybeSingle();
 
-          usuario = linkErr
-            ? usuarioByEmail
-            : { ...usuarioByEmail, auth_user_id: user.id };
-        } else {
-          usuario = usuarioByEmail;
+        if (usuarioEmailErr) {
+          // Usuario autenticado pero sin fila interna resolvible
+          redirectToRegister("missing_usuario_by_email");
+        }
+
+        if (usuarioByEmail?.id) {
+          // Intentamos linkear auth_user_id si falta (si RLS lo permite)
+          if (!usuarioByEmail.auth_user_id) {
+            const { error: linkErr } = await supabase
+              .from("usuarios")
+              .update({ auth_user_id: user.id })
+              .eq("id", usuarioByEmail.id);
+
+            usuario = linkErr
+              ? usuarioByEmail
+              : { ...usuarioByEmail, auth_user_id: user.id };
+          } else {
+            usuario = usuarioByEmail;
+          }
         }
       }
     }
@@ -178,10 +238,14 @@ export default async function DashboardLayout({
   }
 
   const rol = normalizeUserRole(rawRol);
+  // DashboardShell no debe recibir "superadmin" (ese rol se redirige a /admin).
+  // Aun así, tipamos defensivo para que TypeScript no falle.
+  type ShellRole = Exclude<UserRole, "superadmin">;
+  const rolForShell: ShellRole = (rol === "superadmin" ? "admin" : rol) as ShellRole;
 
   // Soporte (superadmin) no debe entrar al dashboard normal.
   // Redirigimos al panel /admin para evitar UI/menus incorrectos.
-  if (rol === "superadmin") {
+  if (rol === "superadmin" && !impersonatedUsuarioId) {
     redirect("/admin");
   }
 
@@ -191,7 +255,7 @@ export default async function DashboardLayout({
       companyName={empresa.nombre}
       companyRut={empresa.rut}
       plan={plan}
-      rol={rol}
+      rol={rolForShell}
       companyLogoUrl={empresa.logo_url}
     >
       {children}
