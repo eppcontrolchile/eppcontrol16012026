@@ -49,6 +49,12 @@ self.addEventListener("fetch", (event) => {
   // Solo mismo origen
   if (url.origin !== self.location.origin) return;
 
+  // No interceptar requests que no sean GET (evita comportamientos raros con POST/PUT, etc.)
+  if (req.method !== "GET") {
+    event.respondWith(fetch(req));
+    return;
+  }
+
   // ⚠️ IMPORTANTE: NO cachear assets de Next (_next). Los nombres pueden ser estables en algunos casos
   // y la PWA puede quedar pegada con bundles viejos (problema típico en mobile).
   if (url.pathname.startsWith("/_next/")) {
@@ -66,8 +72,39 @@ self.addEventListener("fetch", (event) => {
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req).catch(() => {
-        // Offline: redirige a la ruta operativa (si el navegador tiene algo en memoria)
-        return Response.redirect("/m/entrega", 302);
+        // Offline: evita redirect-loop. Muestra una pantalla mínima.
+        const html = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sin conexión</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:24px;background:#f4f4f5;color:#18181b}
+    .card{max-width:520px;margin:0 auto;background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px}
+    h1{font-size:18px;margin:0 0 8px}
+    p{margin:0 0 12px;color:#3f3f46}
+    a{color:#0284c7;text-decoration:underline}
+    button{appearance:none;border:1px solid #e4e4e7;background:#fff;border-radius:10px;padding:10px 12px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Estás sin conexión</h1>
+    <p>No pudimos cargar esta página porque no hay internet.</p>
+    <p>Cuando vuelvas a tener señal, toca “Reintentar”.</p>
+    <button onclick="location.reload()">Reintentar</button>
+    <p style="margin-top:12px"><a href="/m/entrega">Ir a Entrega</a></p>
+  </div>
+</body>
+</html>`;
+        return new Response(html, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          },
+          status: 200,
+        });
       })
     );
     return;

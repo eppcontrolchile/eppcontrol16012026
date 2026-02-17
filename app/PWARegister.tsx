@@ -10,8 +10,17 @@ export default function PWARegister() {
 
     let cancelled = false;
 
+    // Detect if a SW was already controlling this page.
+    // If not, we must NOT reload on the first install (it can cause loops / blank screens).
+    const hadControllerInitially = !!navigator.serviceWorker.controller;
+
+    // Prevent multiple reloads in the same session.
+    const RELOAD_FLAG = "pwa_sw_reloaded_once";
+    // In-memory guard to prevent reload loops even if sessionStorage is unavailable
+    let reloadedInMemory = false;
+
     const forceActivateWaitingSW = async (reg: ServiceWorkerRegistration) => {
-      // Si ya hay uno esperando, lo activamos
+      // If there's a waiting SW, ask it to activate.
       if (reg.waiting) {
         reg.waiting.postMessage({ type: "SKIP_WAITING" });
       }
@@ -19,38 +28,58 @@ export default function PWARegister() {
 
     const onControllerChange = () => {
       if (cancelled) return;
-      // Cuando el nuevo SW toma control, recargamos para traer bundles nuevos
+
+      // Only reload if this was an UPDATE (we already had a controller before).
+      // Also only reload once per session to avoid infinite reload loops.
+      if (!hadControllerInitially) return;
+
+      // First guard in memory (works even if storage is blocked)
+      if (reloadedInMemory) return;
+      reloadedInMemory = true;
+
+      try {
+        if (sessionStorage.getItem(RELOAD_FLAG) === "1") return;
+        sessionStorage.setItem(RELOAD_FLAG, "1");
+      } catch {
+        // ignore storage errors
+      }
+
+      // Soft reload to pick up the new bundles.
       window.location.reload();
     };
 
     (async () => {
       try {
-        navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+        navigator.serviceWorker.addEventListener(
+          "controllerchange",
+          onControllerChange
+        );
 
-          const reg = await navigator.serviceWorker.register(`/sw.js?v=${Date.now()}`);
+        // IMPORTANT:
+        // Do NOT cache-bust the SW URL with Date.now().
+        // That forces a brand new SW on every load and can trigger update/reload loops.
+        const reg = await navigator.serviceWorker.register("/sw.js");
 
-        // Si ya hay update listo (waiting), activarlo
+        // If an update is already waiting, activate it.
         await forceActivateWaitingSW(reg);
 
-        // Si llega uno nuevo
+        // If a new SW is found, wait for it to install then activate it.
         reg.addEventListener("updatefound", () => {
           const sw = reg.installing;
           if (!sw) return;
 
           sw.addEventListener("statechange", () => {
             if (cancelled) return;
-
-            // Cuando termina de instalar, normalmente queda "waiting"
             if (sw.state === "installed") {
-              // Si ya había SW controlando, esto es una actualización
+              // Only treat as update if a controller exists (i.e., previous SW was active).
               if (navigator.serviceWorker.controller) {
-                forceActivateWaitingSW(reg);
+                forceActivateWaitingSW(reg).catch(() => {});
               }
             }
           });
         });
 
-        // Dispara chequeo de update
+        // Trigger an update check (non-blocking).
         reg.update().catch(() => {});
       } catch (err) {
         console.warn("SW register failed", err);
@@ -59,7 +88,10 @@ export default function PWARegister() {
 
     return () => {
       cancelled = true;
-      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      navigator.serviceWorker.removeEventListener(
+        "controllerchange",
+        onControllerChange
+      );
     };
   }, []);
 
