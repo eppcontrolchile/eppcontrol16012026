@@ -197,13 +197,28 @@ export default async function DashboardLayout({
   }
 
   // 3) Empresa
-  const { data: empresa, error: empresaError } = await supabase
+  // En modo soporte, la sesión del superadmin NO pasa RLS para leer la empresa del usuario impersonado.
+  // Por eso, cuando hay impersonación usamos service-role, pero SIEMPRE scopiado por empresa_id.
+  const empresaIdForLookup = String(impersonatedEmpresaId ?? usuario.empresa_id);
+
+  if (impersonatedUsuarioId && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    redirectToRegister("missing_service_role");
+  }
+
+  const empresaClient = impersonatedUsuarioId
+    ? createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+    : supabase;
+
+  const { data: empresa, error: empresaError } = await empresaClient
     .from("empresas")
     .select(
       "nombre, rut, plan_tipo, logo_url, onboarding_completado, onboarding_configuracion_completa"
     )
-    .eq("id", usuario.empresa_id)
-    .single();
+    .eq("id", empresaIdForLookup)
+    .maybeSingle();
 
   if (empresaError || !empresa) {
     // Usuario autenticado pero empresa no accesible/no existe
