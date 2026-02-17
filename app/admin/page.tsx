@@ -88,6 +88,7 @@ export default function AdminPage() {
                 : "No se pudieron cargar las empresas."
           );
           setEmpresas([]);
+          setEmpresaId("");
           setLoading(false);
           return;
         }
@@ -96,15 +97,21 @@ export default function AdminPage() {
         // A) array directo: [...]
         // B) wrapper: { ok:true, rows:[...] }
         // C) wrapper alternativo: { ok:true, empresas:[...] }
-        const rows: Empresa[] = Array.isArray(data)
-          ? (data as Empresa[])
+        const rows: unknown = Array.isArray(data)
+          ? data
           : Array.isArray(data?.rows)
-            ? (data.rows as Empresa[])
+            ? data.rows
             : Array.isArray(data?.empresas)
-              ? (data.empresas as Empresa[])
+              ? data.empresas
               : [];
 
-        setEmpresas(rows);
+        const empresasArr = (Array.isArray(rows) ? rows : []) as Empresa[];
+
+        setEmpresas(empresasArr);
+        // Si la empresa seleccionada ya no existe, resetea selección
+        if (empresaId && !empresasArr.some((e) => e.id === empresaId)) {
+          setEmpresaId("");
+        }
         setError("");
         setLoading(false);
       } catch (e: any) {
@@ -127,6 +134,8 @@ export default function AdminPage() {
         return;
       }
 
+      setError("");
+
       const resp = await fetch("/api/admin/usuarios/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -135,15 +144,20 @@ export default function AdminPage() {
         body: JSON.stringify({ empresa_id: empresaId }),
       });
 
+      const data = await resp.json().catch(() => null);
+
       if (!resp.ok) {
-        const errJson = await resp.json().catch(() => null);
         setUsuarios([]);
         setUsuarioId("");
-        setError(errJson?.reason ? `No se pudieron cargar usuarios: ${errJson.reason}` : "No se pudieron cargar usuarios.");
+        setError(
+          data?.error
+            ? `No se pudieron cargar usuarios: ${data.error}`
+            : data?.reason
+              ? `No se pudieron cargar usuarios: ${data.reason}`
+              : "No se pudieron cargar usuarios."
+        );
         return;
       }
-
-      const data = await resp.json().catch(() => null);
 
       // Soporta array directo o wrappers: { ok:true, usuarios:[...] } / { ok:true, rows:[...] }
       const usuariosArr: unknown = Array.isArray(data)
@@ -197,6 +211,7 @@ export default function AdminPage() {
       return;
     }
 
+    setError("");
     // Ir directo al dashboard (ya con cookie de impersonación seteada)
     router.push("/dashboard");
     router.refresh();
@@ -224,6 +239,7 @@ export default function AdminPage() {
       return;
     }
 
+    setError("");
     // Vuelve como superadmin al dashboard normal
     router.push("/dashboard");
     router.refresh();

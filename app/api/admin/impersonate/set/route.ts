@@ -7,9 +7,47 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
+// Cookie principal (httpOnly) que lee el layout/server para activar modo soporte
 const COOKIE_NAME = "epp_impersonate";
+
+// Cookies de compatibilidad (por si otras partes del código aún esperan estos nombres)
+const COOKIE_EMPRESA = "impersonate_empresa_id";
+const COOKIE_USUARIO = "impersonate_usuario_id";
+
+
 const MAX_AGE_SECONDS = 60 * 60 * 8; // 8 horas
+
+const IS_PROD = process.env.NODE_ENV === "production";
+
+type CookieWrite = {
+  name: string;
+  value: string;
+  httpOnly?: boolean;
+  sameSite?: "lax" | "strict" | "none";
+  secure?: boolean;
+  path?: string;
+  maxAge?: number;
+  expires?: Date;
+};
+
+function expireCookie(res: NextResponse, name: string) {
+  // Some old cookies may have been written with different flags.
+  // Expire both httpOnly and non-httpOnly variants to be robust.
+  const base: CookieWrite = {
+    name,
+    value: "",
+    path: "/",
+    sameSite: "lax",
+    secure: IS_PROD,
+    maxAge: 0,
+    expires: new Date(0),
+  };
+
+  res.cookies.set({ ...base, httpOnly: true });
+  res.cookies.set({ ...base, httpOnly: false });
+}
 
 function isUuid(v: unknown) {
   const s = String(v ?? "").trim();
@@ -147,17 +185,50 @@ export async function POST(req: Request) {
       { status: 200 }
     );
 
+    // Limpia variantes antiguas para evitar estados “pegados”
+    expireCookie(res, COOKIE_NAME);
+    expireCookie(res, "epp_impersonate_v1");
+    expireCookie(res, "epp_impersonate_v2");
+    expireCookie(res, "support_empresa_id");
+    expireCookie(res, "support_usuario_id");
+    expireCookie(res, "support_empresa");
+    expireCookie(res, "support_usuario");
+    expireCookie(res, COOKIE_EMPRESA);
+    expireCookie(res, COOKIE_USUARIO);
+
     res.cookies.set({
       name: COOKIE_NAME,
       value: encodeCookie({ empresa_id, usuario_id }),
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: IS_PROD,
+      path: "/",
+      maxAge: MAX_AGE_SECONDS,
+    });
+
+    // Compat: algunos flujos leen cookies separadas por empresa/usuario
+    res.cookies.set({
+      name: COOKIE_EMPRESA,
+      value: empresa_id,
+      httpOnly: false,
+      sameSite: "lax",
+      secure: IS_PROD,
+      path: "/",
+      maxAge: MAX_AGE_SECONDS,
+    });
+
+    res.cookies.set({
+      name: COOKIE_USUARIO,
+      value: usuario_id,
+      httpOnly: false,
+      sameSite: "lax",
+      secure: IS_PROD,
       path: "/",
       maxAge: MAX_AGE_SECONDS,
     });
 
     res.headers.set("Cache-Control", "no-store");
+    res.headers.set("Pragma", "no-cache");
     return res;
   } catch (e: any) {
     console.error("IMPERSONATE SET ERROR:", e);

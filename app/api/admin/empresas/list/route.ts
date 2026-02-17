@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
       const byEmail = await supabaseAdmin
         .from("usuarios")
         .select("id, rol, activo, auth_user_id, email")
-        .eq("email", email)
+        .ilike("email", email)
         .maybeSingle();
 
       if (byEmail.error) {
@@ -108,7 +108,8 @@ export async function GET(req: NextRequest) {
           await supabaseAdmin
             .from("usuarios")
             .update({ auth_user_id: user.id })
-            .eq("id", (byEmail.data as any).id);
+            .eq("id", (byEmail.data as any).id)
+            .is("auth_user_id", null);
         }
 
         urow = {

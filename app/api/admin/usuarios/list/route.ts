@@ -1,46 +1,36 @@
 // app/api/admin/usuarios/list/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 async function getServerSupabase() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
-    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)");
-  }
-
   const cookieStore = await cookies();
-
-  // Use getAll/setAll so chunked cookies + session refresh work reliably.
-  return createServerClient(supabaseUrl, anonKey, {
-    cookies: {
-      getAll: () => cookieStore.getAll(),
-      setAll: (cookiesToSet) => {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-          });
-        } catch {
-          // no-op
-        }
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
       },
-    },
-  });
+    }
+  );
 }
 
 function getAdminSupabase() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)");
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Missing server Supabase env vars");
   }
-
-  return createClient(supabaseUrl, serviceRoleKey);
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
 }
 
 async function requireAdminOrSuperadmin(empresa_id: string) {
@@ -58,13 +48,13 @@ async function requireAdminOrSuperadmin(empresa_id: string) {
     .eq("auth_user_id", au.user.id)
     .maybeSingle();
 
-  // fallback por email
+  // fallback por email (por si auth_user_id aún no estaba linkeado)
   if (!me?.id) {
     const email = (au.user.email || "").toLowerCase().trim();
     const byEmail = await supabase
       .from("usuarios")
       .select("id, empresa_id, rol, activo, email, auth_user_id")
-      .eq("email", email)
+      .ilike("email", email)
       .maybeSingle();
 
     if (byEmail.data?.id) {
@@ -113,83 +103,78 @@ type UsuarioOut = {
   last_sign_in_at: string | null;
 };
 
+async function handleList(req: Request, empresa_id: string) {
+  if (!empresa_id) {
+    return NextResponse.json({ ok: false, reason: "missing-empresa_id" }, { status: 400 });
+  }
+
+  const gate = await requireAdminOrSuperadmin(empresa_id);
+  if (!gate.ok) {
+    return NextResponse.json({ ok: false, reason: gate.reason }, { status: gate.status });
+  }
+
+  const admin = getAdminSupabase();
+
+  const { data: usuarios, error: uErr } = await admin
+    .from("usuarios")
+    .select("id,nombre,email,activo,rol,auth_user_id")
+    .eq("empresa_id", empresa_id)
+    .order("nombre", { ascending: true });
+
+  if (uErr) {
+    return NextResponse.json({ ok: false, reason: "usuarios-fetch-failed" }, { status: 500 });
+  }
+
+  const rows = (usuarios || []) as any[];
+
+  const enriched: UsuarioOut[] = await Promise.all(
+    rows.map(async (u) => {
+      let last_sign_in_at: string | null = null;
+
+      if (u.auth_user_id) {
+        try {
+          const { data } = await admin.auth.admin.getUserById(u.auth_user_id);
+          last_sign_in_at = (data?.user as any)?.last_sign_in_at ?? null;
+        } catch {
+          last_sign_in_at = null;
+        }
+      }
+
+      return {
+        id: u.id,
+        nombre: u.nombre ?? "",
+        email: u.email ?? "",
+        activo: !!u.activo,
+        rol: u.rol ?? null,
+        auth_user_id: u.auth_user_id ?? null,
+        last_sign_in_at,
+      };
+    })
+  );
+
+  const res = NextResponse.json({ ok: true, usuarios: enriched }, { status: 200 });
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const empresa_id = String(searchParams.get("empresa_id") ?? "").trim();
+    return await handleList(req, empresa_id);
+  } catch (e: any) {
+    console.error("ADMIN USUARIOS LIST GET ERROR:", e);
+    return NextResponse.json({ ok: false, reason: e?.message ?? "unknown-error" }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   try {
-    // Fail fast if server env vars are missing (avoids silent 500s in prod)
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json(
-        { ok: false, reason: "missing-env" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json().catch(() => ({}));
-    const empresa_id = String(body?.empresa_id || "").trim();
-
-    if (!empresa_id) {
-      return NextResponse.json(
-        { ok: false, reason: "missing-empresa_id" },
-        { status: 400 }
-      );
-    }
-
-    const gate = await requireAdminOrSuperadmin(empresa_id);
-    if (!gate.ok) {
-      return NextResponse.json(
-        { ok: false, reason: gate.reason },
-        { status: gate.status }
-      );
-    }
-
-    const admin = getAdminSupabase();
-
-    const { data: usuarios, error: uErr } = await admin
-      .from("usuarios")
-      .select("id,nombre,email,activo,rol,auth_user_id")
-      .eq("empresa_id", empresa_id)
-      .order("nombre", { ascending: true });
-
-    if (uErr) {
-      return NextResponse.json(
-        { ok: false, reason: "usuarios-fetch-failed" },
-        { status: 500 }
-      );
-    }
-
-    // last login via Auth Admin API (solo si hay auth_user_id)
-    const rows = (usuarios || []) as any[];
-
-    const enriched: UsuarioOut[] = await Promise.all(
-      rows.map(async (u) => {
-        let last_sign_in_at: string | null = null;
-
-        if (u.auth_user_id) {
-          try {
-            const { data } = await admin.auth.admin.getUserById(u.auth_user_id);
-            last_sign_in_at = (data?.user as any)?.last_sign_in_at ?? null;
-          } catch {
-            last_sign_in_at = null;
-          }
-        }
-
-        return {
-          id: u.id,
-          nombre: u.nombre ?? "",
-          email: u.email ?? "",
-          activo: !!u.activo,
-          rol: u.rol ?? null,
-          auth_user_id: u.auth_user_id ?? null,
-          last_sign_in_at,
-        };
-      })
-    );
-
-    return NextResponse.json({ ok: true, usuarios: enriched });
+    const empresa_id = String((body as any)?.empresa_id ?? "").trim();
+    return await handleList(req, empresa_id);
   } catch (e: any) {
-    console.error("ADMIN USUARIOS LIST ERROR:", e);
-    return NextResponse.json(
-      { ok: false, reason: e?.message ?? "unknown-error" },
-      { status: 500 }
-    );
+    console.error("ADMIN USUARIOS LIST POST ERROR:", e);
+    return NextResponse.json({ ok: false, reason: e?.message ?? "unknown-error" }, { status: 500 });
   }
 }
