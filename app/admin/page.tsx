@@ -74,30 +74,34 @@ export default function AdminPage() {
         // Cargar empresas
         const resp = await fetch("/api/admin/empresas/list", {
           cache: "no-store",
+          credentials: "include",
         });
-
-        if (!resp.ok) {
-          const errJson = await resp.json().catch(() => null);
-          setError(errJson?.reason ? `No se pudieron cargar las empresas: ${errJson.reason}` : "No se pudieron cargar las empresas.");
-          setLoading(false);
-          return;
-        }
 
         const data = await resp.json().catch(() => null);
 
-        // Soporta ambos formatos:
-        // A) API devuelve array directo: [...]
-        // B) API devuelve wrapper: { ok: true, empresas: [...] }
-        const empresasArr = Array.isArray(data) ? data : (data?.empresas ?? []);
-
-        if (!Array.isArray(empresasArr)) {
+        if (!resp.ok) {
+          setError(
+            data?.error
+              ? `No se pudieron cargar las empresas: ${data.error}`
+              : data?.reason
+                ? `No se pudieron cargar las empresas: ${data.reason}`
+                : "No se pudieron cargar las empresas."
+          );
           setEmpresas([]);
-          setError("Respuesta inválida al listar empresas.");
           setLoading(false);
           return;
         }
 
-        setEmpresas(empresasArr as Empresa[]);
+        // Soporta ambos formatos:
+        // A) API devuelve array directo: [...]
+        // B) API devuelve wrapper: { ok: true, rows: [...] }
+        const rows: Empresa[] = Array.isArray(data)
+          ? (data as Empresa[])
+          : Array.isArray(data?.rows)
+            ? (data.rows as Empresa[])
+            : [];
+
+        setEmpresas(rows);
         setError("");
         setLoading(false);
       } catch (e: any) {
@@ -124,6 +128,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
+        credentials: "include",
         body: JSON.stringify({ empresa_id: empresaId }),
       });
 
@@ -155,6 +160,8 @@ export default function AdminPage() {
   }, [empresaId]);
 
   const handleImpersonar = async () => {
+    setError("");
+
     if (!empresaId || !usuarioId) {
       setError("Selecciona empresa y usuario.");
       return;
@@ -163,21 +170,52 @@ export default function AdminPage() {
     const resp = await fetch("/api/admin/impersonate/set", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ empresa_id: empresaId, usuario_id: usuarioId }),
     });
 
+    const data = await resp.json().catch(() => null);
+
     if (!resp.ok) {
-      setError("No se pudo activar modo soporte.");
+      setError(
+        data?.error
+          ? `No se pudo activar modo soporte: ${data.error}`
+          : data?.reason
+            ? `No se pudo activar modo soporte: ${data.reason}`
+            : "No se pudo activar modo soporte."
+      );
       return;
     }
 
-    alert("Modo soporte activado.");
+    // Ir directo al dashboard (ya con cookie de impersonación seteada)
     router.push("/dashboard");
+    router.refresh();
   };
 
   const handleSalir = async () => {
-    await fetch("/api/admin/impersonate/clear", { method: "POST" });
-    alert("Modo soporte desactivado.");
+    setError("");
+
+    const resp = await fetch("/api/admin/impersonate/clear", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    const data = await resp.json().catch(() => null);
+
+    if (!resp.ok) {
+      setError(
+        data?.error
+          ? `No se pudo desactivar modo soporte: ${data.error}`
+          : data?.reason
+            ? `No se pudo desactivar modo soporte: ${data.reason}`
+            : "No se pudo desactivar modo soporte."
+      );
+      return;
+    }
+
+    // Vuelve como superadmin al dashboard normal
+    router.push("/dashboard");
     router.refresh();
   };
 
