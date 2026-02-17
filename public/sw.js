@@ -1,5 +1,5 @@
 // public/sw.js
-const CACHE = "epp-entregas-v2";
+const CACHE = "epp-entregas-v3";
 
 // Solo assets estáticos (NO HTML)
 const CORE_ASSETS = [
@@ -9,6 +9,13 @@ const CORE_ASSETS = [
   "/pwa/icon-maskable-192.png",
   "/pwa/icon-maskable-512.png",
 ];
+
+// Permite forzar activación del SW nuevo desde el cliente
+self.addEventListener("message", (event) => {
+  if (event?.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -39,6 +46,13 @@ self.addEventListener("fetch", (event) => {
   // Solo mismo origen
   if (url.origin !== self.location.origin) return;
 
+  // ⚠️ IMPORTANTE: NO cachear assets de Next (_next). Los nombres pueden ser estables en algunos casos
+  // y la PWA puede quedar pegada con bundles viejos (problema típico en mobile).
+  if (url.pathname.startsWith("/_next/")) {
+    event.respondWith(fetch(req));
+    return;
+  }
+
   // 1) API: red siempre (sin cache)
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(fetch(req));
@@ -56,7 +70,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3) Assets: cache-first + refresh
+  // 3) Assets (no-_next): cache-first + refresh
   event.respondWith(
     caches.match(req).then((cached) => {
       const fetchAndUpdate = fetch(req)

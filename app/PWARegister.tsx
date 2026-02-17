@@ -10,29 +10,48 @@ export default function PWARegister() {
 
     let cancelled = false;
 
+    const forceActivateWaitingSW = async (reg: ServiceWorkerRegistration) => {
+      // Si ya hay uno esperando, lo activamos
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+    };
+
+    const onControllerChange = () => {
+      if (cancelled) return;
+      // Cuando el nuevo SW toma control, recargamos para traer bundles nuevos
+      window.location.reload();
+    };
+
     (async () => {
       try {
+        navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+
         const reg = await navigator.serviceWorker.register("/sw.js");
 
-        // fuerza a buscar update del sw.js (importante cuando cambias cache/version)
-        reg.update().catch(() => {});
+        // Si ya hay update listo (waiting), activarlo
+        await forceActivateWaitingSW(reg);
 
-        // opcional: si llega un SW nuevo, recarga para tomarlo (solo 1 vez)
+        // Si llega uno nuevo
         reg.addEventListener("updatefound", () => {
-          const installing = reg.installing;
-          if (!installing) return;
+          const sw = reg.installing;
+          if (!sw) return;
 
-          installing.addEventListener("statechange", () => {
+          sw.addEventListener("statechange", () => {
             if (cancelled) return;
-            if (installing.state === "installed") {
-              // Si ya había un SW previo controlando, hay update listo
+
+            // Cuando termina de instalar, normalmente queda "waiting"
+            if (sw.state === "installed") {
+              // Si ya había SW controlando, esto es una actualización
               if (navigator.serviceWorker.controller) {
-                // Recarga suave para tomar la nueva versión
-                window.location.reload();
+                forceActivateWaitingSW(reg);
               }
             }
           });
         });
+
+        // Dispara chequeo de update
+        reg.update().catch(() => {});
       } catch (err) {
         console.warn("SW register failed", err);
       }
@@ -40,6 +59,7 @@ export default function PWARegister() {
 
     return () => {
       cancelled = true;
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
     };
   }, []);
 
