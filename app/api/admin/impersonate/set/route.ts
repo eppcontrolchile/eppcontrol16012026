@@ -21,6 +21,9 @@ const MAX_AGE_SECONDS = 60 * 60 * 8; // 8 horas
 
 const IS_PROD = process.env.NODE_ENV === "production";
 
+// Use a domain cookie in production so it works on both eppcontrol.cl and www.eppcontrol.cl
+const COOKIE_DOMAIN = IS_PROD ? ".eppcontrol.cl" : undefined;
+
 type CookieWrite = {
   name: string;
   value: string;
@@ -28,13 +31,14 @@ type CookieWrite = {
   sameSite?: "lax" | "strict" | "none";
   secure?: boolean;
   path?: string;
+  domain?: string;
   maxAge?: number;
   expires?: Date;
 };
 
 function expireCookie(res: NextResponse, name: string) {
-  // Some old cookies may have been written with different flags.
-  // Expire both httpOnly and non-httpOnly variants to be robust.
+  // Some old cookies may have been written with different flags and/or domain.
+  // Expire both httpOnly and non-httpOnly variants, and both host-only and domain cookies.
   const base: CookieWrite = {
     name,
     value: "",
@@ -45,8 +49,15 @@ function expireCookie(res: NextResponse, name: string) {
     expires: new Date(0),
   };
 
+  // host-only
   res.cookies.set({ ...base, httpOnly: true });
   res.cookies.set({ ...base, httpOnly: false });
+
+  // domain-wide (works for both apex + www)
+  if (COOKIE_DOMAIN) {
+    res.cookies.set({ ...base, httpOnly: true, domain: COOKIE_DOMAIN });
+    res.cookies.set({ ...base, httpOnly: false, domain: COOKIE_DOMAIN });
+  }
 }
 
 function isUuid(v: unknown) {
@@ -203,6 +214,7 @@ export async function POST(req: Request) {
       sameSite: "lax",
       secure: IS_PROD,
       path: "/",
+      domain: COOKIE_DOMAIN,
       maxAge: MAX_AGE_SECONDS,
     });
 
@@ -214,6 +226,7 @@ export async function POST(req: Request) {
       sameSite: "lax",
       secure: IS_PROD,
       path: "/",
+      domain: COOKIE_DOMAIN,
       maxAge: MAX_AGE_SECONDS,
     });
 
@@ -224,6 +237,7 @@ export async function POST(req: Request) {
       sameSite: "lax",
       secure: IS_PROD,
       path: "/",
+      domain: COOKIE_DOMAIN,
       maxAge: MAX_AGE_SECONDS,
     });
 
