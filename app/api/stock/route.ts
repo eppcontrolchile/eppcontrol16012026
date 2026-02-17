@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 
 type StockOutRow = {
   id: string; // empresa_id|categoria|nombre_epp|talla (legacy format kept)
+  variant_key?: string; // categoria|nombre|marca|modelo|talla (unique per variant)
   categoria: string;
   nombre: string;
   marca: string | null;
@@ -22,7 +23,11 @@ type StockOutRow = {
 
 export async function GET(_req: NextRequest) {
   try {
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    if (
+      !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      !process.env.SUPABASE_SERVICE_ROLE_KEY
+    ) {
       return NextResponse.json({ error: "Missing server env vars" }, { status: 500 });
     }
 
@@ -131,8 +136,13 @@ export async function GET(_req: NextRequest) {
       const talla =
         tallaRaw == null || String(tallaRaw).trim() === "" ? null : String(tallaRaw);
 
-      const marca = (r as any).marca ? String((r as any).marca) : null;
-      const modelo = (r as any).modelo ? String((r as any).modelo) : null;
+      const marcaRaw = (r as any).marca;
+      const modeloRaw = (r as any).modelo;
+
+      const marca =
+        marcaRaw == null || String(marcaRaw).trim() === "" ? null : String(marcaRaw).trim();
+      const modelo =
+        modeloRaw == null || String(modeloRaw).trim() === "" ? null : String(modeloRaw).trim();
 
       const qty = Number((r as any).cantidad_disponible ?? 0);
       if (!Number.isFinite(qty) || qty <= 0) continue;
@@ -153,8 +163,11 @@ export async function GET(_req: NextRequest) {
       // el id mantiene el formato que usa /api/stock/[id]/critico
       const tallaForId = x.talla ?? "";
 
+      const variantKey = `${x.categoria}|${x.nombre}|${x.marca ?? ""}|${x.modelo ?? ""}|${tallaForId}`;
+
       return {
         id: `${empresaId}|${x.categoria}|${x.nombre}|${tallaForId}`,
+        variant_key: variantKey,
         categoria: x.categoria,
         nombre: x.nombre,
         marca: x.marca ?? null,

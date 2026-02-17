@@ -45,6 +45,7 @@ function buildEppKey(nombre: string, marca?: string | null, modelo?: string | nu
   return [nombre ?? "", marca ?? "", modelo ?? ""].join("||");
 }
 
+
 function parseEppKey(key: string) {
   const [nombre, marca, modelo] = String(key ?? "").split("||");
   return {
@@ -52,6 +53,31 @@ function parseEppKey(key: string) {
     marca: (marca ?? "").trim() || null,
     modelo: (modelo ?? "").trim() || null,
   };
+}
+
+function splitNombreMarcaModelo(rawNombre: string, rawMarca?: any, rawModelo?: any) {
+  const nombre0 = String(rawNombre ?? "").trim();
+
+  const marca0 = rawMarca == null || String(rawMarca).trim() === "" ? null : String(rawMarca).trim();
+  const modelo0 = rawModelo == null || String(rawModelo).trim() === "" ? null : String(rawModelo).trim();
+
+  // If API already provides marca/modelo, trust it.
+  if (marca0 || modelo0) {
+    return { nombre: nombre0, marca: marca0, modelo: modelo0 };
+  }
+
+  // Fallback: if nombre comes like "Casco (3M - X5000)" or "Casco (3M)", parse it.
+  const m = /^(.+?)\s*\((.+?)\)\s*$/.exec(nombre0);
+  if (m) {
+    const nombre = String(m[1] ?? "").trim();
+    const inner = String(m[2] ?? "").trim();
+    const parts = inner.split("-").map((p) => p.trim()).filter(Boolean);
+    const marca = parts[0] ?? null;
+    const modelo = parts.length > 1 ? parts.slice(1).join(" - ") : null;
+    return { nombre, marca, modelo };
+  }
+
+  return { nombre: nombre0, marca: null, modelo: null };
 }
 
 export default function EgresoPage() {
@@ -142,14 +168,36 @@ export default function EgresoPage() {
         }
 
         const stockRaw = await stockResp.json().catch(() => []);
-        const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => ({
-          categoria: String(r?.categoria ?? ""),
-          nombre: String(r?.nombre ?? ""),
-          marca: r?.marca ?? null,
-          modelo: r?.modelo ?? null,
-          talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
-          stock: Number(r?.stock_total ?? r?.stock ?? 0),
-        }));
+        const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => {
+          // Robust mapping: allow API to return marca/modelo with alternate field names
+          const marca =
+            r?.marca ??
+            r?.marca_epp ??
+            r?.epp_marca ??
+            r?.brand ??
+            r?.Brand ??
+            null;
+
+          const modelo =
+            r?.modelo ??
+            r?.modelo_epp ??
+            r?.epp_modelo ??
+            r?.model ??
+            r?.Model ??
+            null;
+
+          const nombreRaw = String(r?.nombre ?? r?.nombre_epp ?? r?.nombreEpp ?? "");
+          const parsed = splitNombreMarcaModelo(nombreRaw, marca, modelo);
+
+          return {
+            categoria: String(r?.categoria ?? ""),
+            nombre: parsed.nombre,
+            marca: parsed.marca,
+            modelo: parsed.modelo,
+            talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
+            stock: Number(r?.stock_total ?? r?.stock ?? 0),
+          };
+        });
 
         // Solo lo disponible
         setStock(mapped.filter((s) => s.stock > 0));
