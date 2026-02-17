@@ -1,7 +1,6 @@
 // app/dashboard/ingreso/page.tsx
 "use client";
 
-import * as XLSX from "xlsx";
 import { useEffect, useState } from "react";
 
 import { useRouter } from "next/navigation";
@@ -76,13 +75,15 @@ function normSearch(v: any) {
 
 
 type IngresoItem = {
-categoria: string;
-categoriaOtro?: string;
-epp: string;
-tallaNumero: string;
-cantidad: number;
-valorUnitario?: number;
-tipoIVA?: "IVA_INCLUIDO" | "MAS_IVA";
+  categoria: string;
+  categoriaOtro?: string;
+  epp: string;
+  marca?: string;
+  modelo?: string;
+  tallaNumero: string;
+  cantidad: number;
+  valorUnitario?: number;
+  tipoIVA?: "IVA_INCLUIDO" | "MAS_IVA";
 };
 
 type IngresoHistorialRow = {
@@ -92,6 +93,8 @@ type IngresoHistorialRow = {
 
   categoria: string;
   nombre: string;
+  marca?: string | null;
+  modelo?: string | null;
   talla: string | null;
   cantidad: number;
   valorUnitario: number;
@@ -116,8 +119,6 @@ type IngresoHistorialRow = {
 
 export default function IngresoPage() {
 const router = useRouter();
-const [fileKey, setFileKey] = useState<number>(Date.now());
-const [mensajeCarga, setMensajeCarga] = useState<string | null>(null);
 
 // Documento de compra (cabecera)
 const [docTipo, setDocTipo] = useState<"factura" | "guia" | "oc" | "otro">("factura");
@@ -131,6 +132,8 @@ const [items, setItems] = useState<IngresoItem[]>([
   {
     categoria: "",
     epp: "",
+    marca: "",
+    modelo: "",
     tallaNumero: "No aplica",
     cantidad: 1,
     tipoIVA: "IVA_INCLUIDO",
@@ -165,6 +168,8 @@ useEffect(() => {
         const fecha = String(r?.fecha_ingreso ?? r?.fecha ?? "");
         const categoria = String(r?.categoria ?? "");
         const nombre = String(r?.nombre_epp ?? r?.nombre ?? "");
+        const marca = r?.marca ?? null;
+        const modelo = r?.modelo ?? null;
         const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla);
 
         const cantidad = Number(r?.cantidad_inicial ?? r?.cantidad ?? 0);
@@ -180,6 +185,8 @@ useEffect(() => {
           compra: r?.compra ?? null,
           categoria,
           nombre,
+          marca,
+          modelo,
           talla,
           cantidad: Number.isFinite(cantidad) ? cantidad : 0,
           valorUnitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
@@ -210,6 +217,8 @@ const historialFiltrado = qNorm
         row.created_at,
         row.categoria,
         row.nombre,
+        row.marca,
+        row.modelo,
         row.talla,
         row.cantidad,
         row.valorUnitario,
@@ -302,6 +311,8 @@ const addItem = () => {
     {
       categoria: "",
       epp: "",
+      marca: "",
+      modelo: "",
       tallaNumero: "No aplica",
       cantidad: 1,
       tipoIVA: "IVA_INCLUIDO",
@@ -316,50 +327,50 @@ const removeItem = (index: number) => {
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
 
-    if (provRut && !isRutLike(provRut)) {
-      alert("RUT proveedor inválido");
+  if (provRut && !isRutLike(provRut)) {
+    alert("RUT proveedor inválido");
+    return;
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const fila = i + 1;
+
+    if (!item.categoria) {
+      alert(`Fila ${fila}: falta Categoría`);
       return;
     }
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const fila = i + 1;
-
-      if (!item.categoria) {
-        alert(`Fila ${fila}: falta Categoría`);
-        return;
-      }
-
-      if (item.categoria === "Otro" && !(item.categoriaOtro || "").trim()) {
-        alert(`Fila ${fila}: falta especificar la Categoría (Otro)`);
-        return;
-      }
-
-      if (!item.epp || !item.epp.trim()) {
-        alert(`Fila ${fila}: falta Nombre del EPP`);
-        return;
-      }
-
-      if (!item.tallaNumero || !item.tallaNumero.trim()) {
-        alert(`Fila ${fila}: falta Talla / Número (puedes escribir "No aplica")`);
-        return;
-      }
-
-      if (!Number.isFinite(item.cantidad) || item.cantidad <= 0) {
-        alert(`Fila ${fila}: Cantidad inválida`);
-        return;
-      }
-
-      if (!Number.isFinite(item.valorUnitario) || (item.valorUnitario ?? 0) <= 0) {
-        alert(`Fila ${fila}: falta Monto unitario`);
-        return;
-      }
-
-      if (!item.tipoIVA) {
-        alert(`Fila ${fila}: falta Tipo IVA`);
-        return;
-      }
+    if (item.categoria === "Otro" && !(item.categoriaOtro || "").trim()) {
+      alert(`Fila ${fila}: falta especificar la Categoría (Otro)`);
+      return;
     }
+
+    if (!item.epp || !item.epp.trim()) {
+      alert(`Fila ${fila}: falta Nombre del EPP`);
+      return;
+    }
+
+    if (!item.tallaNumero || !item.tallaNumero.trim()) {
+      alert(`Fila ${fila}: falta Talla / Número (puedes escribir "No aplica")`);
+      return;
+    }
+
+    if (!Number.isFinite(item.cantidad) || item.cantidad <= 0) {
+      alert(`Fila ${fila}: Cantidad inválida`);
+      return;
+    }
+
+    if (!Number.isFinite(item.valorUnitario) || (item.valorUnitario ?? 0) <= 0) {
+      alert(`Fila ${fila}: falta Monto unitario`);
+      return;
+    }
+
+    if (!item.tipoIVA) {
+      alert(`Fila ${fila}: falta Tipo IVA`);
+      return;
+    }
+  }
 
   try {
     // Validaciones y conversión de items
@@ -379,6 +390,8 @@ const handleSubmit = async (e: React.FormEvent) => {
             ? item.categoriaOtro || "Otro"
             : item.categoria,
         nombre_epp: item.epp,
+        marca: (item.marca || "").trim() || null,
+        modelo: (item.modelo || "").trim() || null,
         talla:
           item.tallaNumero.toLowerCase() === "no aplica"
             ? null
@@ -413,255 +426,12 @@ const handleSubmit = async (e: React.FormEvent) => {
     setProvNombre("");
     setDocFecha(todayYMD());
     setDocMore(false);
-    router.push("/dashboard/stock");
+    await refrescarHistorial();
   } catch (err: any) {
     alert(err.message || "Error al registrar ingreso");
   }
 };
 
-// Helper para obtener el valor de la columna con tolerancia a variantes de encabezado
-const getCell = (row: any, keys: string[]) => {
-  for (const k of keys) {
-    if (row[k] !== undefined && row[k] !== "") {
-      return row[k];
-    }
-  }
-  return "";
-};
-
-/* CARGA MASIVA (real) */
-const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  setMensajeCarga(null);
-
-  const reader = new FileReader();
-
-  reader.onload = async (evt) => {
-    const data = evt.target?.result;
-    if (!data) return;
-
-    const workbook = XLSX.read(data, { type: "binary" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-
-    const rows = XLSX.utils.sheet_to_json<any>(sheet, {
-      defval: "",
-    });
-
-    if (rows.length === 0) {
-      alert("El archivo no contiene datos.");
-      return;
-    }
-
-    try {
-      // --- Cabecera opcional de documento (aplica a TODO el archivo) ---
-      const tipoDocKey = ["Tipo doc", "Tipo documento", "Tipo", "Documento"];
-      const numDocKey = ["N° documento", "N° Doc", "Numero documento", "Número documento", "Nro documento", "Nro doc"];
-      const fechaDocKey = ["Fecha doc", "Fecha documento", "Fecha"];
-      const rutProvKey = ["RUT proveedor", "Rut proveedor", "RUT Proveedor", "Rut Proveedor"];
-      const provKey = ["Proveedor", "Proveedor (nombre)", "Razón social", "Razon social", "Nombre proveedor"];
-
-      const normalizeTipoDoc = (v: any) => {
-        const s = String(v ?? "")
-          .trim()
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "");
-        if (!s) return "";
-        if (s.includes("fact")) return "factura";
-        if (s.includes("guia")) return "guia";
-        if (s === "oc" || s.includes("orden") || s.includes("compra")) return "oc";
-        if (s.includes("otro")) return "otro";
-        // fallback conservador
-        return "factura";
-      };
-
-      const normalizeExcelDate = (v: any) => {
-        const s = String(v ?? "").trim();
-        if (!s) return "";
-        // Si el Excel trae fecha como Date, XLSX suele entregarlo como string o número.
-        // Aceptamos YYYY-MM-DD o intentamos parsear y formatear.
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-        const dt = parseDateFlexible(s);
-        if (Number.isNaN(dt.getTime())) return "";
-        const y = dt.getFullYear();
-        const m = String(dt.getMonth() + 1).padStart(2, "0");
-        const d = String(dt.getDate()).padStart(2, "0");
-        return `${y}-${m}-${d}`;
-      };
-
-      const firstNonEmpty = (cur: string, next: any) => {
-        const s = String(next ?? "").trim();
-        return cur || s;
-      };
-
-      let excelDocTipo = "";
-      let excelDocNumero = "";
-      let excelDocFecha = "";
-      let excelProvRut = "";
-      let excelProvNombre = "";
-
-      const ingresosMasivos: any[] = [];
-      rows.forEach((row, index) => {
-        // Usar getCell para tolerar variantes de encabezado
-        // Cabecera opcional por fila (si viene repetida en cada fila, validamos consistencia)
-        const tipoDocRaw = getCell(row, tipoDocKey);
-        const numDocRaw = getCell(row, numDocKey);
-        const fechaDocRaw = getCell(row, fechaDocKey);
-        const rutProvRaw = getCell(row, rutProvKey);
-        const provRaw = getCell(row, provKey);
-
-        const tipoDocNorm = normalizeTipoDoc(tipoDocRaw);
-        const numDocNorm = String(numDocRaw ?? "").trim();
-        const fechaDocNorm = normalizeExcelDate(fechaDocRaw);
-        const rutProvNorm = rutProvRaw ? normalizeRut(String(rutProvRaw)) : "";
-        const provNorm = String(provRaw ?? "").trim();
-
-        // Tomar el primer valor no vacío y luego exigir consistencia si aparece otro valor distinto
-        const nextTipo = tipoDocRaw ? tipoDocNorm : "";
-        if (!excelDocTipo) excelDocTipo = nextTipo;
-        else if (nextTipo && nextTipo !== excelDocTipo) {
-          throw new Error(`Fila ${index + 2}: Tipo doc inconsistente ("${tipoDocRaw}")`);
-        }
-
-        if (!excelDocNumero) excelDocNumero = firstNonEmpty(excelDocNumero, numDocNorm);
-        else if (numDocNorm && numDocNorm !== excelDocNumero) {
-          throw new Error(`Fila ${index + 2}: N° documento inconsistente ("${numDocNorm}")`);
-        }
-
-        if (!excelDocFecha) excelDocFecha = firstNonEmpty(excelDocFecha, fechaDocNorm);
-        else if (fechaDocNorm && fechaDocNorm !== excelDocFecha) {
-          throw new Error(`Fila ${index + 2}: Fecha doc inconsistente ("${fechaDocNorm}")`);
-        }
-
-        if (!excelProvRut) excelProvRut = firstNonEmpty(excelProvRut, rutProvNorm);
-        else if (rutProvNorm && rutProvNorm !== excelProvRut) {
-          throw new Error(`Fila ${index + 2}: RUT proveedor inconsistente ("${rutProvNorm}")`);
-        }
-
-        if (!excelProvNombre) excelProvNombre = firstNonEmpty(excelProvNombre, provNorm);
-        else if (provNorm && provNorm !== excelProvNombre) {
-          throw new Error(`Fila ${index + 2}: Proveedor inconsistente ("${provNorm}")`);
-        }
-        const categoriaRaw = getCell(row, ["Categoría", "Categoria"]);
-        const categoria = categoriaRaw
-          ? categoriaRaw
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .toLowerCase()
-          : "";
-        const nombreEpp = getCell(row, ["Nombre EPP", "EPP", "Nombre"]);
-        const tallaNumeroRaw = getCell(row, ["Talla/Número", "Talla / Número", "Talla"]);
-        const tallaNumero =
-          tallaNumeroRaw && tallaNumeroRaw.length > 0
-            ? tallaNumeroRaw
-            : "No aplica";
-        const cantidad = Number(
-          String(getCell(row, ["Cantidad"]))
-            .replace(/\./g, "")
-            .replace(",", ".")
-        );
-        const montoUnitario = Number(
-          String(getCell(row, ["Monto unitario", "Monto Unitario", "Monto unitario ($)", "Monto"]))
-            .replace(/\./g, "")
-            .replace(",", ".")
-        );
-        const tipoIVARaw = getCell(row, ["Tipo IVA", "Tipo de IVA", "IVA"]);
-        const tipoIVA = tipoIVARaw ? tipoIVARaw.toUpperCase() : "";
-
-        if (
-          !categoria ||
-          !nombreEpp || // EPP libre, solo no vacío
-          isNaN(cantidad) ||
-          cantidad <= 0 ||
-          isNaN(montoUnitario) ||
-          montoUnitario <= 0 ||
-          !["IVAINCLUIDO", "+IVA", "MASIVA"].some((v) =>
-            tipoIVA.replace(/\s/g, "").includes(v)
-          )
-        ) {
-          throw new Error(
-            `Fila ${index + 2}: Revisa cantidad, monto unitario o tipo de IVA`
-          );
-        }
-
-        const categoriasNormalizadas = categorias.map((c) =>
-          c
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-        );
-
-        if (!categoriasNormalizadas.includes(categoria)) {
-          throw new Error(
-            `Fila ${index + 2}: categoría inválida (${categoriaRaw})`
-          );
-        }
-
-        let valorIVAIncluido = montoUnitario;
-
-        if (tipoIVA.includes("MAS") || tipoIVA.includes("+")) {
-          valorIVAIncluido = Math.round(
-            montoUnitario * 1.19
-          );
-        }
-
-        ingresosMasivos.push({
-          categoria: categoriaRaw,
-          nombre_epp: nombreEpp,
-          talla:
-            String(tallaNumero).toLowerCase() ===
-            "no aplica"
-              ? null
-              : String(tallaNumero),
-          cantidad,
-          costo_unitario_iva: valorIVAIncluido,
-        });
-      });
-
-      // Validación cabecera opcional
-      if (excelProvRut && !isRutLike(excelProvRut)) {
-        throw new Error(`RUT proveedor inválido en cabecera: ${excelProvRut}`);
-      }
-      if (excelDocFecha && !/^\d{4}-\d{2}-\d{2}$/.test(excelDocFecha)) {
-        throw new Error(`Fecha doc inválida en cabecera (usa YYYY-MM-DD): ${excelDocFecha}`);
-      }
-
-      // Enviar a API
-      const resp = await fetch("/api/stock/ingreso-masivo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          compra:
-            excelDocTipo || excelDocNumero || excelDocFecha || excelProvRut || excelProvNombre
-              ? {
-                  tipo: excelDocTipo || "factura",
-                  numero: excelDocNumero || null,
-                  fecha: excelDocFecha || null,
-                  proveedor_rut: excelProvRut || null,
-                  proveedor_nombre: excelProvNombre || null,
-                }
-              : null,
-          items: ingresosMasivos,
-        }),
-      });
-      if (!resp.ok) {
-        const error = await resp.text();
-        throw new Error(error || "Error en carga masiva");
-      }
-
-      setMensajeCarga(
-        "✔️ Ingreso masivo realizado correctamente. El stock fue actualizado."
-      );
-      setFileKey(Date.now());
-    } catch (err: any) {
-      alert(err.message || "Error en carga masiva");
-    }
-  };
-
-  reader.readAsBinaryString(file);
-};
 
 const handleOrden = (
   campo: keyof IngresoHistorialRow
@@ -694,6 +464,8 @@ const refrescarHistorial = async () => {
       const fecha = String(r?.fecha_ingreso ?? r?.fecha ?? "");
       const categoria = String(r?.categoria ?? "");
       const nombre = String(r?.nombre_epp ?? r?.nombre ?? "");
+      const marca = r?.marca ?? null;
+      const modelo = r?.modelo ?? null;
       const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla);
 
       const cantidad = Number(r?.cantidad_inicial ?? r?.cantidad ?? 0);
@@ -709,6 +481,8 @@ const refrescarHistorial = async () => {
         compra: r?.compra ?? null,
         categoria,
         nombre,
+        marca,
+        modelo,
         talla,
         cantidad: Number.isFinite(cantidad) ? cantidad : 0,
         valorUnitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
@@ -823,7 +597,7 @@ useEffect(() => {
 }, []);
 
 return (
-  <div className="max-w-2xl space-y-6">
+  <div className="w-full space-y-6">
     <h1 className="text-2xl font-semibold">Ingreso de EPP</h1>
 
     {/* INGRESO MANUAL */}
@@ -938,9 +712,7 @@ return (
       </div>
       {items.map((item, index) => {
         const eppsDisponibles: string[] = [];
-
         const tallasDisponibles: { id: string; tallaNumero: string }[] = [];
-
         return (
           <div key={index} className="rounded border p-3 space-y-2">
             <select
@@ -975,6 +747,23 @@ return (
               className="input"
               placeholder="Nombre del EPP"
             />
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <input
+                type="text"
+                value={item.marca || ""}
+                onChange={(e) => updateItem(index, "marca", e.target.value)}
+                className="input"
+                placeholder="Marca (opcional)"
+              />
+              <input
+                type="text"
+                value={item.modelo || ""}
+                onChange={(e) => updateItem(index, "modelo", e.target.value)}
+                className="input"
+                placeholder="Modelo (opcional)"
+              />
+            </div>
 
             <input
               type="text"
@@ -1046,50 +835,7 @@ return (
       </button>
     </form>
 
-    <hr />
-
-    {/* CARGA MASIVA */}
-    <div className="space-y-2">
-      <h2 className="text-lg font-medium">Carga masiva</h2>
-        {mensajeCarga && (
-          <div className="rounded border border-green-300 bg-green-50 p-2 text-sm text-green-800">
-            {mensajeCarga}
-          </div>
-        )}
-
-      <a
-        href="/plantilla_ingreso_epp.xlsx"
-        download
-        className="text-sm underline text-sky-600"
-      >
-        📥 Descargar plantilla
-      </a>
-
-        <div className="space-y-1">
-          <input
-            key={fileKey}
-            type="file"
-            accept=".xlsx,.csv"
-            onChange={handleFileUpload}
-            className="input"
-          />
-
-          <button
-            type="button"
-            onClick={() => setFileKey(Date.now())}
-            className="text-xs text-zinc-500 underline"
-          >
-            Borrar archivo cargado
-          </button>
-        </div>
-
-      <p className="text-xs text-zinc-500">
-        Columnas esperadas (Excel): Categoría | Nombre EPP | Talla/Número | Cantidad | Monto unitario | Tipo IVA
-        <span className="block mt-1">
-          Opcionales (documento de compra, se aplican a todo el archivo): Tipo doc | N° documento | Fecha doc (YYYY-MM-DD) | RUT proveedor | Proveedor
-        </span>
-      </p>
-    </div>
+    {/* CARGA MASIVA section removed */}
 
     <h2 className="text-xl font-semibold">
       Historial de ingresos de EPP
@@ -1129,7 +875,7 @@ return (
     </div>
 
     <div className="overflow-x-auto rounded border">
-      <table className="w-full border-collapse border border-slate-300 text-sm">
+      <table className="w-full min-w-full border-collapse border border-slate-300 text-sm">
         <thead>
           <tr>
             <th
@@ -1215,7 +961,12 @@ return (
                 {row.categoria}
               </td>
               <td className="p-2 border border-slate-300">
-                {row.nombre}
+                <div className="font-medium">{row.nombre}</div>
+                {(row.marca || row.modelo) && (
+                  <div className="text-xs text-zinc-500">
+                    {[row.marca, row.modelo].filter(Boolean).join(" - ")}
+                  </div>
+                )}
               </td>
               <td className="p-2 border border-slate-300">
                 {row.talla ?? "No aplica"}

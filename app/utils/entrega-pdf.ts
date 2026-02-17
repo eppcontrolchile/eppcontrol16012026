@@ -96,21 +96,12 @@ function formatDateTimeSantiago(input: string): { date: string; time: string } {
   try {
     // If input is date-only (YYYY-MM-DD), there is no real time information.
     // JS parses YYYY-MM-DD as UTC 00:00, which becomes the previous day at 21:00 in CLT.
-    // For PDFs we prefer showing only the date in that case.
+    // Auditoría: si no hay hora real, NO inventar una. Mostrar solo fecha.
     const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test((input || "").trim());
     if (isDateOnly) {
       const date = input.split("-").reverse().join("/");
-      // If we only have a date, we still show a time. Use the current time in America/Santiago.
-      // This keeps the PDF consistent with "Fecha + hora" in UI when the stored value lacks time.
-      const nowParts = new Intl.DateTimeFormat("es-CL", {
-        timeZone: "America/Santiago",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(new Date());
-      const getNow = (t: string) => nowParts.find((p) => p.type === t)?.value || "";
-      const time = `${getNow("hour")}:${getNow("minute")}`;
-      return { date, time };
+      // Auditoría: si no hay hora real, NO inventar una. Mostrar solo fecha.
+      return { date, time: "" };
     }
 
     const d = new Date(input);
@@ -174,6 +165,9 @@ export type TrabajadorPDF = {
 export type ItemPDF = {
   categoria: string;
   epp: string;
+  // Opcionales: se ingresan por separado pero se muestran concatenados.
+  marca?: string | null;
+  modelo?: string | null;
   tallaNumero?: string | null;
   cantidad: number;
 };
@@ -275,8 +269,8 @@ export async function generarPdfEntrega(params: {
   doc.text(`Folio: ${folio}`, marginX + 4, headerTop + 7);
 
   const fechaLinea = dt.time
-    ? `Fecha: ${dt.date} ${dt.time} (CLT)`
-    : `Fecha: ${dt.date} (CLT)`;
+    ? `Fecha: ${dt.date} ${dt.time} (hora Chile)`
+    : `Fecha: ${dt.date} (hora Chile)`;
   doc.text(fechaLinea, marginX + 4, headerTop + 13);
 
   doc.text(`Empresa: ${empresa.nombre}`, marginX + 4, headerTop + 19);
@@ -341,7 +335,10 @@ export async function generarPdfEntrega(params: {
   // Body rows
   egreso.items.forEach((item) => {
     // page break if needed
-    if (y + rowH > 255) {
+    const pageH = doc.internal.pageSize.getHeight();
+    // Deja espacio para el footer (logo + legales + paginación)
+    const bottomSafeY = pageH - 55;
+    if (y + rowH > bottomSafeY) {
       doc.addPage();
       y = 20;
 
@@ -372,7 +369,13 @@ export async function generarPdfEntrega(params: {
     }
 
     const cat = textOrDash(item.categoria);
-    const epp = textOrDash(item.epp);
+    const eppBase = textOrDash(item.epp);
+    const mmParts = [
+      item.marca ? `Marca: ${String(item.marca).trim()}` : null,
+      item.modelo ? `Modelo: ${String(item.modelo).trim()}` : null,
+    ].filter(Boolean) as string[];
+
+    const epp = mmParts.length ? `${eppBase} - ${mmParts.join(" - ")}` : eppBase;
     const talla = textOrDash(item.tallaNumero ?? null);
     const cant = String(item.cantidad ?? 0);
 
@@ -417,7 +420,7 @@ export async function generarPdfEntrega(params: {
     if (isDataImageUrl(normalizedFirma)) {
       // Si es JPG, jsPDF requiere el tipo correcto
       const fmt = normalizedFirma.includes("data:image/jpeg") || normalizedFirma.includes("data:image/jpg") ? "JPEG" : "PNG";
-      doc.addImage(normalizedFirma, fmt as any, marginX, y, 60, 25);
+      addImageContain(doc, normalizedFirma, fmt, marginX, y, 60, 25);
       y += 25 + 6;
       firmaImgDrawn = true;
     }

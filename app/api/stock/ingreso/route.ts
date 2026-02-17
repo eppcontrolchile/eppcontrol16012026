@@ -184,6 +184,8 @@ export async function POST(req: NextRequest) {
         {
           categoria: body.categoria,
           nombre_epp: body.nombre_epp ?? body.nombreEpp,
+          marca: body.marca,
+          modelo: body.modelo,
           talla: body.talla,
           cantidad: body.cantidad,
           costo_unitario_iva: body.costo_unitario_iva ?? body.costoUnitarioIVA,
@@ -201,6 +203,11 @@ export async function POST(req: NextRequest) {
     rows = items.map((it) => {
       const categoria = String(it?.categoria ?? "").trim();
       const nombre_epp = String(it?.nombre_epp ?? it?.nombreEpp ?? "").trim();
+
+      const marcaRaw = it?.marca != null ? String(it.marca).trim() : "";
+      const modeloRaw = it?.modelo != null ? String(it.modelo).trim() : "";
+      const marca = marcaRaw ? marcaRaw : null;
+      const modelo = modeloRaw ? modeloRaw : null;
 
       // Normaliza talla: variantes de "No aplica" se guardan como NULL
       const tallaRaw = it?.talla ? String(it.talla).trim() : "";
@@ -234,6 +241,8 @@ export async function POST(req: NextRequest) {
         usuario_id: usuario.id,
         categoria,
         nombre_epp,
+        marca,
+        modelo,
         talla,
         cantidad_inicial: cantidadNum,
         cantidad_disponible: cantidadNum,
@@ -307,6 +316,8 @@ export async function POST(req: NextRequest) {
         lote_id: lotesInserted[idx]?.id ?? null,
         categoria: r.categoria,
         nombre_epp: r.nombre_epp,
+        marca: r.marca ?? null,
+        modelo: r.modelo ?? null,
         talla: r.talla,
         cantidad: r.cantidad_inicial,
         costo_unitario_iva: r.costo_unitario_iva,

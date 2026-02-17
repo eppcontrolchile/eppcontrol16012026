@@ -17,16 +17,42 @@ type Trabajador = {
 type StockRow = {
   categoria: string;
   nombre: string;
+  marca?: string | null;
+  modelo?: string | null;
   talla: string | null;
   stock: number;
 };
 
 type EgresoItemUI = {
   categoria: string;
-  epp: string;
+  // Composite key to uniquely identify stock rows by nombre + marca + modelo
+  eppKey: string;
+  // Display label (includes marca/modelo concatenated when available)
+  eppLabel: string;
+  // Normalized fields (used for payload)
+  nombre_epp: string;
+  marca?: string | null;
+  modelo?: string | null;
   tallaNumero: string;
   cantidad: number;
 };
+
+function formatMarcaModelo(marca?: string | null, modelo?: string | null) {
+  return [marca, modelo].filter(Boolean).join(" - ");
+}
+
+function buildEppKey(nombre: string, marca?: string | null, modelo?: string | null) {
+  return [nombre ?? "", marca ?? "", modelo ?? ""].join("||");
+}
+
+function parseEppKey(key: string) {
+  const [nombre, marca, modelo] = String(key ?? "").split("||");
+  return {
+    nombre: (nombre ?? "").trim(),
+    marca: (marca ?? "").trim() || null,
+    modelo: (modelo ?? "").trim() || null,
+  };
+}
 
 export default function EgresoPage() {
   const router = useRouter();
@@ -40,7 +66,16 @@ export default function EgresoPage() {
   const [stock, setStock] = useState<StockRow[]>([]);
 
   const [items, setItems] = useState<EgresoItemUI[]>([
-    { categoria: "", epp: "", tallaNumero: "", cantidad: 1 },
+    {
+      categoria: "",
+      eppKey: "",
+      eppLabel: "",
+      nombre_epp: "",
+      marca: null,
+      modelo: null,
+      tallaNumero: "",
+      cantidad: 1,
+    },
   ]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -110,6 +145,8 @@ export default function EgresoPage() {
         const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => ({
           categoria: String(r?.categoria ?? ""),
           nombre: String(r?.nombre ?? ""),
+          marca: r?.marca ?? null,
+          modelo: r?.modelo ?? null,
           talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
           stock: Number(r?.stock_total ?? r?.stock ?? 0),
         }));
@@ -132,28 +169,65 @@ export default function EgresoPage() {
   }, [stock]);
 
   const eppsPorCategoria = useMemo(() => {
-    const map = new Map<string, string[]>();
+    // Map categoria -> list of { key, nombre, marca, modelo, label }
+    const map = new Map<
+      string,
+      { key: string; nombre: string; marca: string | null; modelo: string | null; label: string }[]
+    >();
+
     for (const s of stock) {
       if (!map.has(s.categoria)) map.set(s.categoria, []);
       const arr = map.get(s.categoria)!;
-      if (!arr.includes(s.nombre)) arr.push(s.nombre);
+
+      const mm = formatMarcaModelo(s.marca, s.modelo);
+      const label = mm ? `${s.nombre} (${mm})` : s.nombre;
+      const key = buildEppKey(s.nombre, s.marca ?? null, s.modelo ?? null);
+
+      // Ensure one option per unique key (nombre+marca+modelo)
+      if (!arr.some((x) => x.key === key)) {
+        arr.push({
+          key,
+          nombre: s.nombre,
+          marca: s.marca ?? null,
+          modelo: s.modelo ?? null,
+          label,
+        });
+      }
     }
+
     for (const [k, arr] of map.entries()) {
-      map.set(k, arr.sort((a, b) => a.localeCompare(b)));
+      map.set(
+        k,
+        arr.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))
+      );
     }
+
     return map;
   }, [stock]);
 
-  const tallasPara = (categoria: string, epp: string) => {
-    const rows = stock.filter((s) => s.categoria === categoria && s.nombre === epp);
+  const tallasPara = (categoria: string, eppKey: string) => {
+    const { nombre, marca, modelo } = parseEppKey(eppKey);
+    const rows = stock.filter(
+      (s) =>
+        s.categoria === categoria &&
+        s.nombre === nombre &&
+        (s.marca ?? null) === (marca ?? null) &&
+        (s.modelo ?? null) === (modelo ?? null)
+    );
     const tallas = rows.map((r) => r.talla ?? "No aplica");
     return Array.from(new Set(tallas)).sort((a, b) => a.localeCompare(b));
   };
 
-  const stockDisponiblePara = (categoria: string, epp: string, tallaNumero: string) => {
+  const stockDisponiblePara = (categoria: string, eppKey: string, tallaNumero: string) => {
+    const { nombre, marca, modelo } = parseEppKey(eppKey);
     const tallaKey = !tallaNumero || tallaNumero === "No aplica" ? null : tallaNumero;
     const row = stock.find(
-      (s) => s.categoria === categoria && s.nombre === epp && (s.talla ?? null) === tallaKey
+      (s) =>
+        s.categoria === categoria &&
+        s.nombre === nombre &&
+        (s.marca ?? null) === (marca ?? null) &&
+        (s.modelo ?? null) === (modelo ?? null) &&
+        (s.talla ?? null) === tallaKey
     );
     return row?.stock ?? 0;
   };
@@ -167,7 +241,19 @@ export default function EgresoPage() {
   };
 
   const addItem = () => {
-    setItems((prev) => [...prev, { categoria: "", epp: "", tallaNumero: "", cantidad: 1 }]);
+    setItems((prev) => [
+      ...prev,
+      {
+        categoria: "",
+        eppKey: "",
+        eppLabel: "",
+        nombre_epp: "",
+        marca: null,
+        modelo: null,
+        tallaNumero: "",
+        cantidad: 1,
+      },
+    ]);
   };
 
   const removeItem = (index: number) => {
@@ -261,13 +347,14 @@ export default function EgresoPage() {
     }
 
     for (const item of items) {
-      if (!item.categoria || !item.epp || !item.tallaNumero || item.cantidad <= 0) {
+      if (!item.categoria || !item.eppKey || !item.tallaNumero || item.cantidad <= 0) {
         setError("Completa correctamente todos los EPP");
         return;
       }
-      const disp = stockDisponiblePara(item.categoria, item.epp, item.tallaNumero);
+      const disp = stockDisponiblePara(item.categoria, item.eppKey, item.tallaNumero);
       if (item.cantidad > disp) {
-        setError(`Cantidad supera stock disponible (${disp}) para ${item.epp} (${item.tallaNumero}).`);
+        const show = item.eppLabel || item.nombre_epp || "EPP";
+        setError(`Cantidad supera stock disponible (${disp}) para ${show} (${item.tallaNumero}).`);
         return;
       }
     }
@@ -300,7 +387,9 @@ export default function EgresoPage() {
         firma_url: canvasRef.current?.toDataURL() || null,
         items: items.map((i) => ({
           categoria: i.categoria,
-          nombre_epp: i.epp,
+          nombre_epp: i.nombre_epp,
+          marca: i.marca ?? null,
+          modelo: i.modelo ?? null,
           talla: i.tallaNumero === "No aplica" || i.tallaNumero === "" ? null : i.tallaNumero,
           cantidad: Number(i.cantidad),
         })),
@@ -388,8 +477,8 @@ export default function EgresoPage() {
 
           {items.map((it, idx) => {
             const epps = it.categoria ? (eppsPorCategoria.get(it.categoria) ?? []) : [];
-            const tallas = it.categoria && it.epp ? tallasPara(it.categoria, it.epp) : [];
-            const disp = it.categoria && it.epp && it.tallaNumero ? stockDisponiblePara(it.categoria, it.epp, it.tallaNumero) : 0;
+            const tallas = it.categoria && it.eppKey ? tallasPara(it.categoria, it.eppKey) : [];
+            const disp = it.categoria && it.eppKey && it.tallaNumero ? stockDisponiblePara(it.categoria, it.eppKey, it.tallaNumero) : 0;
 
             return (
               <div key={idx} className="rounded border p-3 space-y-2">
@@ -398,7 +487,15 @@ export default function EgresoPage() {
                     className="input"
                     value={it.categoria}
                     onChange={(e) => {
-                      updateItem(idx, { categoria: e.target.value, epp: "", tallaNumero: "" });
+                      updateItem(idx, {
+                        categoria: e.target.value,
+                        eppKey: "",
+                        eppLabel: "",
+                        nombre_epp: "",
+                        marca: null,
+                        modelo: null,
+                        tallaNumero: "",
+                      });
                     }}
                   >
                     <option value="">Categoría…</option>
@@ -409,22 +506,35 @@ export default function EgresoPage() {
 
                   <select
                     className="input"
-                    value={it.epp}
+                    value={it.eppKey}
                     disabled={!it.categoria}
                     onChange={(e) => {
-                      updateItem(idx, { epp: e.target.value, tallaNumero: "" });
+                      const nextKey = e.target.value;
+                      const meta = parseEppKey(nextKey);
+                      // Find the label from options (fallback to nombre)
+                      const opt = epps.find((o) => o.key === nextKey);
+                      updateItem(idx, {
+                        eppKey: nextKey,
+                        eppLabel: opt?.label ?? meta.nombre,
+                        nombre_epp: meta.nombre,
+                        marca: meta.marca,
+                        modelo: meta.modelo,
+                        tallaNumero: "",
+                      });
                     }}
                   >
                     <option value="">EPP…</option>
-                    {epps.map((n) => (
-                      <option key={n} value={n}>{n}</option>
+                    {epps.map((opt) => (
+                      <option key={opt.key} value={opt.key}>
+                        {opt.label}
+                      </option>
                     ))}
                   </select>
 
                   <select
                     className="input"
                     value={it.tallaNumero}
-                    disabled={!it.categoria || !it.epp}
+                    disabled={!it.categoria || !it.eppKey}
                     onChange={(e) => updateItem(idx, { tallaNumero: e.target.value })}
                   >
                     <option value="">Talla/Número…</option>

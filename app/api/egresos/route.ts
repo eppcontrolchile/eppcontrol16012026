@@ -3,23 +3,49 @@
 // Orquestador backend: delega FIFO y transacción 100% a PostgreSQL
 
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { generarPdfEntrega } from "@/utils/entrega-pdf";
 import { guardarPdfEnStorage } from "@/utils/guardar-pdf-storage";
 import { enviarCorreosEgreso } from "@/utils/enviar-mail-egreso";
 
-// 👇 AQUÍ VA (justo después de los imports)
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-async function urlToDataUrl(input?: string | null): Promise<string | null> {
+function isAllowedRemoteAssetUrl(input: string, supabaseUrl: string): boolean {
+  try {
+    const u = new URL(input);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+
+    const supaHost = new URL(supabaseUrl).host;
+
+    // Allow same-host assets (typical: https://<project>.supabase.co/storage/v1/object/public/..)
+    if (u.host === supaHost) {
+      return u.pathname.includes("/storage/v1/object/public/");
+    }
+
+    // Allow common Supabase public storage host pattern, but still require storage public path
+    if (u.host.endsWith(".supabase.co")) {
+      return u.pathname.includes("/storage/v1/object/public/");
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function urlToDataUrl(input: string | null | undefined, supabaseUrl: string): Promise<string | null> {
   if (!input) return null;
 
   // Already a data URL
   if (input.startsWith("data:")) return input;
 
-  // Only allow http(s) fetches. Never pass local paths to the PDF generator.
+  // Only allow safe Supabase Storage public URLs. Never pass local paths to the PDF generator.
   if (!/^https?:\/\//i.test(input)) return null;
+  if (!isAllowedRemoteAssetUrl(input, supabaseUrl)) return null;
 
   const res = await fetch(input);
   if (!res.ok) {
@@ -28,12 +54,9 @@ async function urlToDataUrl(input?: string | null): Promise<string | null> {
 
   const contentType = res.headers.get("content-type") || "application/octet-stream";
   const ab = await res.arrayBuffer();
-  // Node runtime only (this route is forced to nodejs runtime)
   const b64 = Buffer.from(ab).toString("base64");
   return `data:${contentType};base64,${b64}`;
 }
-
-export const revalidate = 0;
 
 /**
  * POST /api/egresos
@@ -43,19 +66,55 @@ export const revalidate = 0;
  * 3. Retornar resultado
  */
 export async function POST(req: NextRequest) {
+  const cookieStore = await cookies();
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) {
+
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return NextResponse.json(
-      { error: "Faltan variables de entorno de Supabase (NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY)" },
+      { error: "Faltan variables de entorno de Supabase" },
       { status: 500 }
     );
   }
 
+  // Auth client (reads session cookie)
+  const supabaseAuth = createServerClient(supabaseUrl, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // ignore
+        }
+      },
+    },
+  });
+
+  // Admin client (bypasses RLS)
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
+  // Validate session
+  const {
+    data: { user },
+    error: authError,
+  } = await supabaseAuth.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ error: "Body inválido" }, { status: 400 });
+    }
 
     const idempotencyKey = req.headers.get("Idempotency-Key");
     if (!idempotencyKey) {
@@ -65,14 +124,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const {
-      empresa_id,
-      usuario_id,
-      trabajador_id,
-      centro_id,
-      firma_url,
-      items,
-    } = body;
+    const { data: usuarioRow, error: usuarioErr } = await supabase
+      .from("usuarios")
+      .select("id, empresa_id, rol, activo, email")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+
+    if (usuarioErr) {
+      return NextResponse.json({ error: usuarioErr.message }, { status: 500 });
+    }
+
+    if (!usuarioRow?.id || !usuarioRow?.empresa_id) {
+      return NextResponse.json({ error: "Usuario no válido" }, { status: 403 });
+    }
+
+    if (usuarioRow.activo === false) {
+      return NextResponse.json({ error: "Usuario bloqueado" }, { status: 403 });
+    }
+
+    // En egresos, exigimos rol admin (por impacto en stock)
+    const rol = String(usuarioRow.rol ?? "").toLowerCase();
+    if (rol !== "admin") {
+      return NextResponse.json({ error: "Permisos insuficientes" }, { status: 403 });
+    }
+
+    const empresa_id = String(usuarioRow.empresa_id);
+    const usuario_id = String(usuarioRow.id);
+
+    const { trabajador_id, centro_id, firma_url, items } = body;
 
     // ─────────────────────────────────────────────
     // 1️⃣ Validaciones mínimas
@@ -92,23 +171,34 @@ export async function POST(req: NextRequest) {
     }
 
     // ─────────────────────────────────────────────
-    // Validación explícita de cada item en items
+    // Validación explícita de cada item en items (marca/modelo opcional)
     // ─────────────────────────────────────────────
     for (const item of items) {
-      if (
-        !item ||
-        typeof item.categoria !== "string" ||
-        item.categoria.trim() === "" ||
-        typeof item.nombre_epp !== "string" ||
-        item.nombre_epp.trim() === "" ||
-        typeof item.cantidad !== "number" ||
-        item.cantidad <= 0
-      ) {
+      const categoriaOk = item && typeof item.categoria === "string" && item.categoria.trim() !== "";
+      const nombreOk = item && typeof item.nombre_epp === "string" && item.nombre_epp.trim() !== "";
+      const cantidadOk = item && typeof item.cantidad === "number" && item.cantidad > 0;
+
+      const marcaOk = item?.marca == null || typeof item.marca === "string";
+      const modeloOk = item?.modelo == null || typeof item.modelo === "string";
+
+      if (!categoriaOk || !nombreOk || !cantidadOk || !marcaOk || !modeloOk) {
         return NextResponse.json(
           { error: "Item inválido en items" },
           { status: 400 }
         );
       }
+    }
+
+    // Prepara lookup para fallback de marca/modelo en PDF
+    const reqMetaByKey = new Map<string, { marca: string | null; modelo: string | null }>();
+    for (const it of items) {
+      const cat = String(it.categoria ?? "").trim();
+      const nom = String(it.nombre_epp ?? "").trim();
+      const talla = it.talla != null ? String(it.talla).trim() : "";
+      const marca = it.marca != null && String(it.marca).trim() ? String(it.marca).trim() : null;
+      const modelo = it.modelo != null && String(it.modelo).trim() ? String(it.modelo).trim() : null;
+      const key = `${cat}||${nom}||${talla}`;
+      if (!reqMetaByKey.has(key)) reqMetaByKey.set(key, { marca, modelo });
     }
 
     // ─────────────────────────────────────────────
@@ -189,7 +279,9 @@ export async function POST(req: NextRequest) {
             categoria,
             nombre_epp,
             talla,
-            cantidad
+            cantidad,
+            marca,
+            modelo
           )
         `)
         .eq("id", entregaId)
@@ -236,8 +328,8 @@ export async function POST(req: NextRequest) {
       // Normalizar imágenes para el PDF:
       // - jsPDF no debe recibir rutas locales (provocan error "allowFsRead")
       // - Convertimos URLs http(s) a data URL base64
-      const logoDataUrl = await urlToDataUrl(empresaRel?.logo_url ?? null);
-      const firmaDataUrl = await urlToDataUrl(entregaData.firma_url ?? null);
+      const logoDataUrl = await urlToDataUrl(empresaRel?.logo_url ?? null, supabaseUrl);
+      const firmaDataUrl = await urlToDataUrl(entregaData.firma_url ?? null, supabaseUrl);
 
       // Armar estructura PDF
       const pdfBuffer = await generarPdfEntrega({
@@ -255,12 +347,26 @@ export async function POST(req: NextRequest) {
             rut: trabajadorRel?.rut,
             centro: centroRel?.nombre,
           },
-          items: (Array.isArray((entregaData as any).entrega_items) ? (entregaData as any).entrega_items : []).map((i: any) => ({
-            categoria: i.categoria,
-            epp: i.nombre_epp,
-            tallaNumero: i.talla,
-            cantidad: i.cantidad,
-          })),
+          items: (Array.isArray((entregaData as any).entrega_items) ? (entregaData as any).entrega_items : []).map((i: any) => {
+            const cat = String(i?.categoria ?? "").trim();
+            const nom = String(i?.nombre_epp ?? "").trim();
+            const talla = i?.talla != null ? String(i.talla).trim() : "";
+            const key = `${cat}||${nom}||${talla}`;
+
+            const fallback = reqMetaByKey.get(key);
+            const marca = (i?.marca != null && String(i.marca).trim()) ? String(i.marca).trim() : (fallback?.marca ?? null);
+            const modelo = (i?.modelo != null && String(i.modelo).trim()) ? String(i.modelo).trim() : (fallback?.modelo ?? null);
+
+            const mm = [marca, modelo].filter(Boolean).join(" - ");
+            const eppLabel = mm ? `${nom} (${mm})` : nom;
+
+            return {
+              categoria: i.categoria,
+              epp: eppLabel,
+              tallaNumero: i.talla,
+              cantidad: i.cantidad,
+            };
+          }),
           // Si no hay firma o no es http(s)/data URL, se deja null para que el PDF no intente leer FS
           firmaBase64: firmaDataUrl,
         },
@@ -297,35 +403,41 @@ export async function POST(req: NextRequest) {
         // Continue without failing
       } else {
         try {
-          // Obtener correo del administrador (usuario)
-          const { data: usuarioMail } = await supabase
-            .from("usuarios")
-            .select("email")
-            .eq("id", usuario_id)
-            .single();
+          // Resolver email del admin (usuario que registró el egreso). Si no existe, no enviamos.
+          let emailAdmin: string | null = (usuarioRow as any)?.email ?? null;
 
-          // Obtener datos completos de la entrega para email (reusing entregaData is not possible here because it's inside try block)
-          // But we have empresaRel and trabajadorRel from above, so we can reuse them only if pdf generation succeeded.
-          // To keep it simple, we use the same variables from the PDF block.
+          if (!emailAdmin) {
+            const { data: usuarioMail } = await supabase
+              .from("usuarios")
+              .select("email")
+              .eq("id", usuario_id)
+              .maybeSingle();
 
-          enviarCorreosEgreso({
-            pdf_url: pdfPath,
-            empresa: {
-              nombre: empresaRel?.nombre,
-            },
-            trabajador: {
-              nombre: trabajadorRel?.nombre,
-              rut: trabajadorRel?.rut,
-              email: trabajadorRel?.email ?? null,
-            },
-            emailAdmin: usuarioMail?.email,
-          }).catch((err) => {
-            console.error("ERROR ENVÍO CORREOS EGRESO (non-blocking):", {
-              entregaId,
-              pdfPath,
-              err,
+            emailAdmin = usuarioMail?.email ?? null;
+          }
+
+          if (!emailAdmin) {
+            console.warn("EMAIL SKIPPED: admin email missing", { entregaId, pdfPath });
+          } else {
+            enviarCorreosEgreso({
+              pdf_url: pdfPath,
+              empresa: {
+                nombre: empresaRel?.nombre,
+              },
+              trabajador: {
+                nombre: trabajadorRel?.nombre,
+                rut: trabajadorRel?.rut,
+                email: trabajadorRel?.email ?? null,
+              },
+              emailAdmin,
+            }).catch((err) => {
+              console.error("ERROR ENVÍO CORREOS EGRESO (non-blocking):", {
+                entregaId,
+                pdfPath,
+                err,
+              });
             });
-          });
+          }
         } catch (mailError) {
           // No rompe el flujo principal del egreso
           console.error("ERROR ENVÍO CORREOS EGRESO:", mailError);

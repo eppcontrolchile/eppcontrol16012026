@@ -172,6 +172,11 @@ export async function POST(req: Request) {
     const cantidad = Number(it.cantidad);
     const costo = Number(it.costo_unitario_iva ?? it.costoUnitarioIVA);
 
+    const marcaRaw = it?.marca != null ? String(it.marca).trim() : "";
+    const modeloRaw = it?.modelo != null ? String(it.modelo).trim() : "";
+    const marca = marcaRaw ? marcaRaw : null;
+    const modelo = modeloRaw ? modeloRaw : null;
+
     const tallaRaw = it?.talla ? String(it.talla).trim() : "";
     const talla =
       tallaRaw &&
@@ -186,6 +191,8 @@ export async function POST(req: Request) {
       usuario_id: usuario.id,
       categoria: String(it.categoria || "").trim(),
       nombre_epp: String((it.nombre_epp ?? it.nombreEpp) || "").trim(),
+      marca,
+      modelo,
       talla,
       cantidad_inicial: cantidad,
       cantidad_disponible: cantidad,
@@ -292,6 +299,8 @@ export async function POST(req: Request) {
         lote_id: lote.id,
         categoria: lote.categoria,
         nombre_epp: lote.nombre_epp,
+        marca: lote.marca ?? null,
+        modelo: lote.modelo ?? null,
         talla: lote.talla,
         cantidad: lote.cantidad_inicial,
         costo_unitario_iva: lote.costo_unitario_iva,

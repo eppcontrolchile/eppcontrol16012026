@@ -10,9 +10,11 @@ export const revalidate = 0;
 export const runtime = "nodejs";
 
 type StockOutRow = {
-  id: string; // empresa_id|categoria|nombre_epp|talla
+  id: string; // empresa_id|categoria|nombre_epp|talla (legacy format kept)
   categoria: string;
   nombre: string;
+  marca: string | null;
+  modelo: string | null;
   talla: string | null;
   stock_total: number;
   stock_critico: number;
@@ -79,7 +81,7 @@ export async function GET(_req: NextRequest) {
     // 3.1) Lotes NO anulados y disponibles > 0
     const { data: lots, error: lotsErr } = await admin
       .from("lotes_epp")
-      .select("categoria,nombre_epp,talla,cantidad_disponible")
+      .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible")
       .eq("empresa_id", empresaId)
       .eq("anulado", false)
       .gt("cantidad_disponible", 0);
@@ -112,7 +114,14 @@ export async function GET(_req: NextRequest) {
     // 4) Agregación por categoria/nombre/talla usando cantidad_disponible
     const agg = new Map<
       string,
-      { categoria: string; nombre: string; talla: string | null; stock_total: number }
+      {
+        categoria: string;
+        nombre: string;
+        marca: string | null;
+        modelo: string | null;
+        talla: string | null;
+        stock_total: number;
+      }
     >();
 
     for (const r of lots ?? []) {
@@ -122,13 +131,19 @@ export async function GET(_req: NextRequest) {
       const talla =
         tallaRaw == null || String(tallaRaw).trim() === "" ? null : String(tallaRaw);
 
+      const marca = (r as any).marca ? String((r as any).marca) : null;
+      const modelo = (r as any).modelo ? String((r as any).modelo) : null;
+
       const qty = Number((r as any).cantidad_disponible ?? 0);
       if (!Number.isFinite(qty) || qty <= 0) continue;
 
-      const key = `${categoria}||${nombre}||${talla ?? ""}`;
+      const key = `${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
       const prev = agg.get(key);
-      if (!prev) agg.set(key, { categoria, nombre, talla, stock_total: qty });
-      else prev.stock_total += qty;
+      if (!prev) {
+        agg.set(key, { categoria, nombre, marca, modelo, talla, stock_total: qty });
+      } else {
+        prev.stock_total += qty;
+      }
     }
 
     const out: StockOutRow[] = Array.from(agg.values()).map((x) => {
@@ -142,6 +157,8 @@ export async function GET(_req: NextRequest) {
         id: `${empresaId}|${x.categoria}|${x.nombre}|${tallaForId}`,
         categoria: x.categoria,
         nombre: x.nombre,
+        marca: x.marca ?? null,
+        modelo: x.modelo ?? null,
         talla: x.talla,
         stock_total: x.stock_total,
         stock_critico: stockCritico,
