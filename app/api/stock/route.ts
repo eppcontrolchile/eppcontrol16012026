@@ -5,6 +5,16 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+const IMPERSONATE_COOKIE = "epp_impersonate";
+
+function safeJsonParse<T = any>(s: string): T | null {
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return null;
+  }
+}
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const runtime = "nodejs";
@@ -60,14 +70,20 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ error: "No auth" }, { status: 401 });
     }
 
-    // 2) Resolver empresa_id desde usuarios (con RLS)
-    const { data: me, error: meErr } = await supabaseAuth
+    // 2) Service role (para resolver "me" sin depender de RLS)
+    const admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // 2.1) Resolver empresa_id/rol desde usuarios (server-side)
+    const { data: me, error: meErr } = await admin
       .from("usuarios")
-      .select("empresa_id, activo")
+      .select("empresa_id, activo, rol")
       .eq("auth_user_id", user.id)
       .maybeSingle();
 
-    if (meErr || !me?.empresa_id) {
+    if (meErr || !me) {
       return NextResponse.json({ error: "Missing usuario/empresa" }, { status: 400 });
     }
 
@@ -75,13 +91,20 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ error: "Inactive" }, { status: 403 });
     }
 
-    const empresaId = me.empresa_id as string;
+    let empresaId = me.empresa_id as string;
+    if (!empresaId) {
+      return NextResponse.json({ error: "Missing usuario/empresa" }, { status: 400 });
+    }
 
-    // 3) Service role (pero SIEMPRE scopiado por empresaId)
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // 2.2) Impersonación (solo superadmin): permite scoping por otra empresa
+    const impRaw = cookieStore.get(IMPERSONATE_COOKIE)?.value;
+    if (impRaw && String(me.rol ?? "").toLowerCase() === "superadmin") {
+      const parsed = safeJsonParse<{ empresa_id?: string | null }>(impRaw);
+      const impEmpresa = String(parsed?.empresa_id ?? "").trim();
+      if (impEmpresa) empresaId = impEmpresa;
+    }
+
+    // 3) A partir de aquí, SIEMPRE scopiado por empresaId
 
     // 3.1) Lotes NO anulados y disponibles > 0
     const { data: lots, error: lotsErr } = await admin

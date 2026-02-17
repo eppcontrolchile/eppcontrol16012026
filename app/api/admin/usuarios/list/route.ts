@@ -29,7 +29,7 @@ function getAdminSupabase() {
   );
 }
 
-async function requireAdminForEmpresa(empresa_id: string) {
+async function requireAdminOrSuperadmin(empresa_id: string) {
   const supabase = await getServerSupabase();
 
   const { data: au, error: auErr } = await supabase.auth.getUser();
@@ -46,10 +46,11 @@ async function requireAdminForEmpresa(empresa_id: string) {
 
   // fallback por email
   if (!me?.id) {
+    const email = (au.user.email || "").toLowerCase().trim();
     const byEmail = await supabase
       .from("usuarios")
       .select("id, empresa_id, rol, activo, email, auth_user_id")
-      .eq("email", (au.user.email || "").toLowerCase())
+      .eq("email", email)
       .maybeSingle();
 
     if (byEmail.data?.id) {
@@ -69,10 +70,19 @@ async function requireAdminForEmpresa(empresa_id: string) {
   if (!me.activo) {
     return { ok: false as const, status: 403, reason: "usuario-inactivo" };
   }
+
+  const rol = String(me.rol ?? "").toLowerCase();
+
+  // ✅ Soporte: puede listar usuarios de cualquier empresa
+  if (rol === "superadmin") {
+    return { ok: true as const, me };
+  }
+
+  // ✅ Admin normal: solo dentro de su empresa
   if (me.empresa_id !== empresa_id) {
     return { ok: false as const, status: 403, reason: "empresa-mismatch" };
   }
-  if (me.rol !== "admin") {
+  if (rol !== "admin") {
     return { ok: false as const, status: 403, reason: "forbidden-not-admin" };
   }
 
@@ -101,7 +111,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const gate = await requireAdminForEmpresa(empresa_id);
+    const gate = await requireAdminOrSuperadmin(empresa_id);
     if (!gate.ok) {
       return NextResponse.json(
         { ok: false, reason: gate.reason },

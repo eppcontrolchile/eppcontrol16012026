@@ -601,6 +601,12 @@ export default function EgresoPage() {
                   />
                 </div>
 
+                {(it.marca || it.modelo) && (
+                  <div className="text-xs text-zinc-600">
+                    Marca/Modelo: <b>{formatMarcaModelo(it.marca, it.modelo)}</b>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between text-xs text-zinc-600">
                   <span>Stock disponible: <b>{disp}</b></span>
                   {items.length > 1 && (
