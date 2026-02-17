@@ -1,5 +1,8 @@
 // public/sw.js
-const CACHE = "epp-entregas-v3";
+// 🔁 IMPORTANT: bump this version on each deploy that changes frontend bundles/UI.
+// This forces a new cache namespace and guarantees old cached assets are deleted on activate.
+const SW_VERSION = "v4";
+const CACHE = `epp-entregas-${SW_VERSION}`;
 
 // Solo assets estáticos (NO HTML)
 const CORE_ASSETS = [
@@ -75,10 +78,14 @@ self.addEventListener("fetch", (event) => {
     caches.match(req).then((cached) => {
       const fetchAndUpdate = fetch(req)
         .then((res) => {
-          // Solo cachea respuestas OK y GET
-          if (req.method === "GET" && res && res.ok) {
+          // Solo cachea respuestas OK, same-origin (type: basic) y GET
+          // y evita cachear HTML por accidente.
+          const ct = res?.headers?.get("content-type") || "";
+          const isHtml = ct.includes("text/html");
+
+          if (req.method === "GET" && res && res.ok && res.type === "basic" && !isHtml) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           }
           return res;
         })

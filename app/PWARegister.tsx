@@ -27,7 +27,7 @@ export default function PWARegister() {
       try {
         navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
-        const reg = await navigator.serviceWorker.register("/sw.js");
+          const reg = await navigator.serviceWorker.register(`/sw.js?v=${Date.now()}`);
 
         // Si ya hay update listo (waiting), activarlo
         await forceActivateWaitingSW(reg);

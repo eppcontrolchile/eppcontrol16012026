@@ -21,6 +21,8 @@ type CentroTrabajo = {
 type StockRow = {
   categoria: string;
   nombre: string;
+  marca?: string | null;
+  modelo?: string | null;
   talla: string | null;
   stock: number;
 };
@@ -31,6 +33,10 @@ type EgresoItemUI = {
   tallaNumero: string;
   cantidad: number;
 };
+
+function formatMarcaModelo(marca?: string | null, modelo?: string | null) {
+  return [marca, modelo].filter(Boolean).join(" - ");
+}
 
 export default function EntregaPage() {
 
@@ -71,6 +77,8 @@ export default function EntregaPage() {
     const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => ({
       categoria: String(r?.categoria ?? ""),
       nombre: String(r?.nombre ?? ""),
+      marca: r?.marca == null || String(r.marca).trim() === "" ? null : String(r.marca).trim(),
+      modelo: r?.modelo == null || String(r.modelo).trim() === "" ? null : String(r.modelo).trim(),
       talla:
         r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
       stock: Number(r?.stock_total ?? r?.stock ?? 0),
@@ -196,15 +204,30 @@ export default function EntregaPage() {
   }, [stock]);
 
   const eppsPorCategoria = useMemo(() => {
-    const map = new Map<string, string[]>();
+    // Map categoria -> list of { nombre, label }
+    const map = new Map<string, { nombre: string; label: string }[]>();
+
     for (const s of stock) {
       if (!map.has(s.categoria)) map.set(s.categoria, []);
       const arr = map.get(s.categoria)!;
-      if (!arr.includes(s.nombre)) arr.push(s.nombre);
+
+      // Prefer a label that includes marca/modelo if available
+      const mm = formatMarcaModelo(s.marca ?? null, s.modelo ?? null);
+      const label = mm ? `${s.nombre} (${mm})` : s.nombre;
+
+      // Ensure one option per nombre (keep the first label found)
+      if (!arr.some((x) => x.nombre === s.nombre)) {
+        arr.push({ nombre: s.nombre, label });
+      }
     }
+
     for (const [k, arr] of map.entries()) {
-      map.set(k, arr.sort((a, b) => a.localeCompare(b)));
+      map.set(
+        k,
+        arr.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))
+      );
     }
+
     return map;
   }, [stock]);
 
@@ -588,8 +611,10 @@ export default function EntregaPage() {
                     }}
                   >
                     <option value="">EPP…</option>
-                    {epps.map((n) => (
-                      <option key={n} value={n}>{n}</option>
+                    {epps.map((opt) => (
+                      <option key={opt.nombre} value={opt.nombre}>
+                        {opt.label}
+                      </option>
                     ))}
                   </select>
 

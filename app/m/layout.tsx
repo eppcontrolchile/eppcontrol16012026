@@ -29,10 +29,12 @@ export default async function MobileLayout({ children }: { children: ReactNode }
     }
   );
 
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error: authErr,
+  } = await supabase.auth.getUser();
   if (authErr || !user) redirect("/auth/login?next=/m/entrega");
 
-  // Resolver usuario interno
   const { data: usuarioByAuth } = await supabase
     .from("usuarios")
     .select("id, empresa_id, email, auth_user_id, activo, rol")
@@ -41,7 +43,6 @@ export default async function MobileLayout({ children }: { children: ReactNode }
 
   let usuario = usuarioByAuth as any;
 
-  // (Opcional) fallback por email si tienes invitaciones con auth_user_id null
   if (!usuario?.id) {
     const email = (user.email || "").trim().toLowerCase();
     if (email) {
@@ -50,28 +51,18 @@ export default async function MobileLayout({ children }: { children: ReactNode }
         .select("id, empresa_id, email, auth_user_id, activo, rol")
         .eq("email", email)
         .maybeSingle();
-
       usuario = usuarioByEmail as any;
     }
   }
 
   if (!usuario?.id) redirect("/auth/login?next=/m/entrega&reason=missing_usuario");
+  if (usuario.activo === false) redirect("/auth/login?next=/m/entrega&reason=inactive");
+  if (!usuario.empresa_id) redirect("/auth/login?next=/m/entrega&reason=missing_empresa_id");
 
-  if (usuario.activo === false) {
-    redirect("/auth/login?next=/m/entrega&reason=inactive");
-  }
-
-  if (!usuario.empresa_id) {
-    redirect("/auth/login?next=/m/entrega&reason=missing_empresa_id");
-  }
-
-  // Layout ultra simple
   return (
     <div className="min-h-dvh bg-zinc-50">
       <PWARegister />
-      <div className="mx-auto max-w-md p-4">
-        {children}
-      </div>
+      <div className="mx-auto max-w-md p-4">{children}</div>
     </div>
   );
 }
