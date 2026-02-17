@@ -8,25 +8,39 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function getServerSupabase() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+  }
+
   const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
+
+  // Use getAll/setAll so chunked cookies + session refresh work reliably.
+  return createServerClient(supabaseUrl, anonKey, {
+    cookies: {
+      getAll: () => cookieStore.getAll(),
+      setAll: (cookiesToSet) => {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // no-op
+        }
       },
-    }
-  );
+    },
+  });
 }
 
 function getAdminSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey);
 }
 
 async function requireAdminOrSuperadmin(empresa_id: string) {
@@ -101,8 +115,16 @@ type UsuarioOut = {
 
 export async function POST(req: Request) {
   try {
+    // Fail fast if server env vars are missing (avoids silent 500s in prod)
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json(
+        { ok: false, reason: "missing-env" },
+        { status: 500 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
-    const empresa_id = String(body?.empresa_id || "");
+    const empresa_id = String(body?.empresa_id || "").trim();
 
     if (!empresa_id) {
       return NextResponse.json(

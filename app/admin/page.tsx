@@ -77,13 +77,28 @@ export default function AdminPage() {
         });
 
         if (!resp.ok) {
-          setError("No se pudieron cargar las empresas.");
+          const errJson = await resp.json().catch(() => null);
+          setError(errJson?.reason ? `No se pudieron cargar las empresas: ${errJson.reason}` : "No se pudieron cargar las empresas.");
           setLoading(false);
           return;
         }
 
-        const data = await resp.json();
-        setEmpresas(data ?? []);
+        const data = await resp.json().catch(() => null);
+
+        // Soporta ambos formatos:
+        // A) API devuelve array directo: [...]
+        // B) API devuelve wrapper: { ok: true, empresas: [...] }
+        const empresasArr = Array.isArray(data) ? data : (data?.empresas ?? []);
+
+        if (!Array.isArray(empresasArr)) {
+          setEmpresas([]);
+          setError("Respuesta inválida al listar empresas.");
+          setLoading(false);
+          return;
+        }
+
+        setEmpresas(empresasArr as Empresa[]);
+        setError("");
         setLoading(false);
       } catch (e: any) {
         setError(e?.message || "Error cargando admin");
@@ -105,19 +120,35 @@ export default function AdminPage() {
         return;
       }
 
-      const resp = await fetch(
-        `/api/admin/usuarios/list?empresa_id=${empresaId}`,
-        { cache: "no-store" }
-      );
+      const resp = await fetch("/api/admin/usuarios/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ empresa_id: empresaId }),
+      });
 
       if (!resp.ok) {
+        const errJson = await resp.json().catch(() => null);
         setUsuarios([]);
+        setUsuarioId("");
+        setError(errJson?.reason ? `No se pudieron cargar usuarios: ${errJson.reason}` : "No se pudieron cargar usuarios.");
         return;
       }
 
-      const data = await resp.json();
-      setUsuarios(data ?? []);
+      const data = await resp.json().catch(() => null);
+
+      // Soporta array directo o wrapper { ok:true, usuarios:[...] }
+      const usuariosArr = Array.isArray(data) ? data : (data?.usuarios ?? []);
+      if (!Array.isArray(usuariosArr)) {
+        setUsuarios([]);
+        setUsuarioId("");
+        setError("Respuesta inválida al listar usuarios.");
+        return;
+      }
+
+      setUsuarios(usuariosArr as Usuario[]);
       setUsuarioId("");
+      setError("");
     };
 
     loadUsuarios();

@@ -11,7 +11,13 @@ export const revalidate = 0;
 export const runtime = "nodejs";
 
 export type PlanTipo = "standard" | "advanced";
-export type UserRole = "admin" | "supervisor" | "bodega" | "solo_entrega" | "gerencia";
+export type UserRole =
+  | "admin"
+  | "supervisor"
+  | "bodega"
+  | "solo_entrega"
+  | "gerencia"
+  | "superadmin";
 
 function normalizePlanTipo(planTipo: unknown): PlanTipo {
   return planTipo === "advanced" ? "advanced" : "standard";
@@ -23,7 +29,8 @@ function normalizeUserRole(role: unknown): UserRole {
     role === "supervisor" ||
     role === "bodega" ||
     role === "solo_entrega" ||
-    role === "gerencia"
+    role === "gerencia" ||
+    role === "superadmin"
   ) {
     return role as UserRole;
   }
@@ -171,6 +178,12 @@ export default async function DashboardLayout({
   }
 
   const rol = normalizeUserRole(rawRol);
+
+  // Soporte (superadmin) no debe entrar al dashboard normal.
+  // Redirigimos al panel /admin para evitar UI/menus incorrectos.
+  if (rol === "superadmin") {
+    redirect("/admin");
+  }
 
   // 5) Render
   return (

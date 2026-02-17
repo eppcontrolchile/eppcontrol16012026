@@ -1,4 +1,4 @@
-//api/admin/empresas/list
+//api/admin/empresas/list/route.ts
 
 // EPP Control — API Admin: Listar empresas (solo superadmin)
 
@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
   let qb: any = supabaseAdmin
     .from("empresas")
     .select(
-      "id, nombre, rut, plan_tipo, estado_plan, created_at",
+      "id, nombre, rut",
       { count: "exact" }
     )
     .order("nombre", { ascending: true });
@@ -120,16 +120,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const res = NextResponse.json(
-    {
-      ok: true,
-      rows: data ?? [],
-      count: count ?? null,
-      limit,
-      offset,
-    },
-    { status: 200 }
-  );
+  // ✅ Devolver array directo (para que el frontend pueda hacer .map sin romperse)
+  // Si más adelante quieres paginación en UI, podemos mover `count/limit/offset` a headers (ya están abajo).
+  const rows = (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    nombre: String(r.nombre ?? ""),
+    rut: String(r.rut ?? ""),
+  }));
+
+  const res = NextResponse.json(rows, { status: 200 });
 
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("X-Page-Limit", String(limit));
