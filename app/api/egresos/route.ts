@@ -280,8 +280,8 @@ export async function POST(req: NextRequest) {
             nombre_epp,
             talla,
             cantidad,
-            marca,
-            modelo
+            lote_id,
+            lotes_epp:lote_id ( marca, modelo )
           )
         `)
         .eq("id", entregaId)
@@ -354,8 +354,22 @@ export async function POST(req: NextRequest) {
             const key = `${cat}||${nom}||${talla}`;
 
             const fallback = reqMetaByKey.get(key);
-            const marca = (i?.marca != null && String(i.marca).trim()) ? String(i.marca).trim() : (fallback?.marca ?? null);
-            const modelo = (i?.modelo != null && String(i.modelo).trim()) ? String(i.modelo).trim() : (fallback?.modelo ?? null);
+
+            // `lotes_epp:lote_id ( marca, modelo )` may come as object or as single-item array
+            const loteRel = Array.isArray(i?.lotes_epp) ? i.lotes_epp[0] : i?.lotes_epp;
+
+            const marcaFromLote =
+              loteRel?.marca != null && String(loteRel.marca).trim()
+                ? String(loteRel.marca).trim()
+                : null;
+
+            const modeloFromLote =
+              loteRel?.modelo != null && String(loteRel.modelo).trim()
+                ? String(loteRel.modelo).trim()
+                : null;
+
+            const marca = marcaFromLote ?? (fallback?.marca ?? null);
+            const modelo = modeloFromLote ?? (fallback?.modelo ?? null);
 
             const mm = [marca, modelo].filter(Boolean).join(" - ");
             const eppLabel = mm ? `${nom} (${mm})` : nom;
