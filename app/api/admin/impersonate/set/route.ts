@@ -195,8 +195,8 @@ export async function POST(req: Request) {
         type: "magiclink",
         email,
         options: {
-          // Redirigir al dashboard ya logueado como el usuario
-          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.eppcontrol.cl"}/dashboard`,
+          // Redirigir al callback de auth ya logueado como el usuario
+          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.eppcontrol.cl"}/auth/callback`,
         },
       } as any);
 
