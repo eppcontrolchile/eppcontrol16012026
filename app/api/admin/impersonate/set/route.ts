@@ -196,7 +196,7 @@ export async function POST(req: Request) {
         email,
         options: {
           // Redirigir al callback de auth ya logueado como el usuario
-          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.eppcontrol.cl"}/auth/callback`,
+          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.eppcontrol.cl"}/auth/hash-callback`,
         },
       } as any);
 
