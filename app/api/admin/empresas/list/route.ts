@@ -153,7 +153,8 @@ export async function GET(req: NextRequest) {
       { count: "exact" }
     )
     // Solo empresas activas
-    .eq("activo", true)
+    // Consideramos NULL como activo (mientras se completa backfill)
+    .or("activo.is.null,activo.eq.true")
     .order("nombre", { ascending: true });
 
   if (q) {
