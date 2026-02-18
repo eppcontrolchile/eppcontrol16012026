@@ -30,6 +30,7 @@ export async function POST() {
   const res = NextResponse.json({ ok: true }, { status: 200 });
 
   const isProd = process.env.NODE_ENV === "production";
+  const COOKIE_DOMAIN = isProd ? ".eppcontrol.cl" : undefined;
   const deleteOptsBase = {
     path: "/",
     maxAge: 0,
@@ -54,6 +55,25 @@ export async function POST() {
       ...deleteOptsBase,
       httpOnly: false,
     });
+
+    // If cookies were set with a domain (e.g. ".eppcontrol.cl"), we must also expire them with the same domain.
+    if (COOKIE_DOMAIN) {
+      res.cookies.set({
+        name,
+        value: "",
+        ...deleteOptsBase,
+        httpOnly: true,
+        domain: COOKIE_DOMAIN,
+      });
+
+      res.cookies.set({
+        name,
+        value: "",
+        ...deleteOptsBase,
+        httpOnly: false,
+        domain: COOKIE_DOMAIN,
+      });
+    }
   }
 
   // Evita cualquier cache raro en PWA/edge

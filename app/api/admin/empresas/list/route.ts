@@ -149,9 +149,11 @@ export async function GET(req: NextRequest) {
   let qb: any = supabaseAdmin
     .from("empresas")
     .select(
-      "id, nombre, rut",
+      "id, nombre, rut, activo",
       { count: "exact" }
     )
+    // Solo empresas activas
+    .eq("activo", true)
     .order("nombre", { ascending: true });
 
   if (q) {

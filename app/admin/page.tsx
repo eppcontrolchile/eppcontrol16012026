@@ -220,29 +220,19 @@ export default function AdminPage() {
   const handleSalir = async () => {
     setError("");
 
-    const resp = await fetch("/api/admin/impersonate/clear", {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-    });
-
-    const data = await resp.json().catch(() => null);
-
-    if (!resp.ok) {
-      setError(
-        data?.error
-          ? `No se pudo desactivar modo soporte: ${data.error}`
-          : data?.reason
-            ? `No se pudo desactivar modo soporte: ${data.reason}`
-            : "No se pudo desactivar modo soporte."
-      );
-      return;
+    try {
+      await fetch("/api/admin/impersonate/clear", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch {
+      // Ignorar: igual forzamos logout para limpiar sesión
+    } finally {
+      // Logout real (cierra sesión Supabase y limpia cookies sb-*)
+      window.location.href = "/auth/logout";
     }
-
-    setError("");
-    // Vuelve como superadmin al dashboard normal
-    router.push("/dashboard");
-    router.refresh();
   };
 
   if (loading) {

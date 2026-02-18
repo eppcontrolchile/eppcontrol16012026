@@ -119,6 +119,8 @@ async function handleList(req: Request, empresa_id: string) {
     .from("usuarios")
     .select("id,nombre,email,activo,rol,auth_user_id")
     .eq("empresa_id", empresa_id)
+    // Solo usuarios activos
+    .eq("activo", true)
     .order("nombre", { ascending: true });
 
   if (uErr) {
