@@ -133,35 +133,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   }
 
-  // 3) Optional pagination/search
-  const { searchParams } = new URL(req.url);
-  const q = (searchParams.get("q") ?? "").trim();
+  // 3) Listado: devolvemos todas las empresas activas (hasta 500) sin depender de query params
+  const limit = 500;
+  const offset = 0;
 
-  const limitRaw = searchParams.get("limit");
-  const offsetRaw = searchParams.get("offset");
-
-  const limitParsed = Number(limitRaw);
-  const offsetParsed = Number(offsetRaw);
-
-  const limit = Number.isFinite(limitParsed) ? Math.min(Math.max(limitParsed, 1), 500) : 200;
-  const offset = Number.isFinite(offsetParsed) ? Math.max(offsetParsed, 0) : 0;
-
-  let qb: any = supabaseAdmin
+  const qb = supabaseAdmin
     .from("empresas")
-    .select(
-      "id, nombre, rut, activo",
-      { count: "exact" }
-    )
-    // Solo empresas activas
-    // Consideramos NULL como activo (mientras se completa backfill)
+    .select("id, nombre, rut, activo", { count: "exact" })
+    // Consideramos NULL como activo (por compatibilidad / backfill)
     .or("activo.is.null,activo.eq.true")
     .order("nombre", { ascending: true });
-
-  if (q) {
-    // búsqueda simple por nombre o rut
-    const esc = q.replace(/%/g, "\\%").replace(/_/g, "\\_");
-    qb = qb.or(`nombre.ilike.%${esc}%,rut.ilike.%${esc}%`);
-  }
 
   const { data, error, count } = await qb.range(offset, offset + limit - 1);
 
