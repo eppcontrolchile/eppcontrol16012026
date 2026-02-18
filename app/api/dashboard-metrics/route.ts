@@ -55,6 +55,7 @@ function startOfMonthISO(tz: string) {
   return new Date(Date.UTC(y, m - 1, 1, 0, 0, 0)).toISOString();
 }
 
+
 export async function GET() {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.json({ error: "Missing NEXT_PUBLIC_SUPABASE_URL/ANON_KEY" }, { status: 500 });

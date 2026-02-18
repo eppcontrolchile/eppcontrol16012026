@@ -195,7 +195,7 @@ export default function AdminPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ empresa_id: empresaId, usuario_id: usuarioId }),
+      body: JSON.stringify({ empresa_id: empresaId, usuario_id: usuarioId, login: true }),
     });
 
     const data = await resp.json().catch(() => null);
@@ -212,9 +212,17 @@ export default function AdminPage() {
     }
 
     setError("");
-    // Ir directo al dashboard (ya con cookie de impersonación seteada)
-    router.push("/dashboard");
-    router.refresh();
+
+    // Login real como el usuario (magic link generado por el backend)
+    const actionLink = data?.action_link as string | undefined;
+
+    if (!actionLink) {
+      setError("No se recibió el link de login para entrar como usuario.");
+      return;
+    }
+
+    // Recomendación: si quieres mantener tu sesión superadmin abierta, usa perfil/incógnito.
+    window.location.href = actionLink;
   };
 
   const handleSalir = async () => {

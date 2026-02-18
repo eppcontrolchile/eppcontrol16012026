@@ -149,7 +149,7 @@ export async function POST(req: Request) {
     // 3) Validate target usuario belongs to empresa and is active
     const { data: target, error: tErr } = await admin
       .from("usuarios")
-      .select("id, empresa_id, activo, nombre, email, rol")
+      .select("id, empresa_id, activo, nombre, email, rol, auth_user_id")
       .eq("id", usuario_id)
       .maybeSingle();
 
@@ -178,6 +178,63 @@ export async function POST(req: Request) {
     }
     if (!emp?.id) {
       return NextResponse.json({ ok: false, reason: "empresa-not-found" }, { status: 404 });
+    }
+
+    // 4.b) Login real como el cliente (opcional): genera un magic link de una sola vez.
+    // Esto crea una sesión real (JWT) como el usuario destino, por lo que verás exactamente lo que él ve.
+    const wantsLogin = body?.login === true;
+
+    if (wantsLogin) {
+      const email = String((target as any).email ?? "").trim().toLowerCase();
+      if (!email) {
+        return NextResponse.json({ ok: false, reason: "target-missing-email" }, { status: 400 });
+      }
+
+      // Genera un link de login (magic link). Requiere service role.
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type: "magiclink",
+        email,
+        options: {
+          // Redirigir al dashboard ya logueado como el usuario
+          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.eppcontrol.cl"}/dashboard`,
+        },
+      } as any);
+
+      if (linkErr || !linkData) {
+        return NextResponse.json(
+          { ok: false, reason: "generate-link-failed", error: linkErr?.message ?? null },
+          { status: 500 }
+        );
+      }
+
+      // Nota: `action_link` es el link que debes abrir/redirect para completar el login.
+      // (En Supabase v2 suele venir como `action_link`.)
+      const actionLink = (linkData as any).action_link ?? (linkData as any).properties?.action_link ?? null;
+
+      if (!actionLink) {
+        return NextResponse.json({ ok: false, reason: "missing-action-link" }, { status: 500 });
+      }
+
+      const res = NextResponse.json(
+        {
+          ok: true,
+          mode: "login_as",
+          action_link: actionLink,
+          impersonating: {
+            empresa_id,
+            empresa_nombre: emp.nombre ?? null,
+            usuario_id: target.id,
+            usuario_nombre: target.nombre ?? null,
+            usuario_email: email,
+            usuario_rol: target.rol ?? null,
+          },
+        },
+        { status: 200 }
+      );
+
+      res.headers.set("Cache-Control", "no-store");
+      res.headers.set("Pragma", "no-cache");
+      return res;
     }
 
     // 5) Set cookie (HttpOnly)

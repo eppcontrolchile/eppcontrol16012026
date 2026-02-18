@@ -57,7 +57,12 @@ export async function GET() {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    // 2) Obtener empresa_id del usuario (RLS)
+    // 2) Obtener empresa_id del usuario autenticado (RLS)
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
     const { data: usuario, error: usuarioError } = await supabase
       .from("usuarios")
       .select("empresa_id")
@@ -68,16 +73,12 @@ export async function GET() {
       return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
     }
 
-    // 3) Cliente Admin (SERVICE ROLE) para leer plan/limites sin que RLS bloquee
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const empresaId = String(usuario.empresa_id);
 
     const { data: empresa, error: empresaError } = await supabaseAdmin
       .from("empresas")
       .select("plan_tipo, limite_trabajadores")
-      .eq("id", usuario.empresa_id)
+      .eq("id", empresaId)
       .single();
 
     if (empresaError || !empresa) {
@@ -88,7 +89,7 @@ export async function GET() {
     const { count, error: countError } = await supabaseAdmin
       .from("trabajadores")
       .select("id", { count: "exact", head: true })
-      .eq("empresa_id", usuario.empresa_id)
+      .eq("empresa_id", empresaId)
       .eq("activo", true);
 
     if (countError) {
