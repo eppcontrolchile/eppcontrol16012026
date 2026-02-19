@@ -106,6 +106,18 @@ function formatLastLogin(s?: string | null) {
   }).format(d);
 }
 
+function getCookie(name: string) {
+  if (typeof document === "undefined") return null;
+  const escaped = name.replace(/[-.$?*|{}()\[\]\\/+^]/g, "\\$&");
+  const m = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function isUuid(v: unknown) {
+  const s = String(v ?? "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 export default function UsuariosPage() {
   const supabase = supabaseBrowser();
 
@@ -230,7 +242,15 @@ export default function UsuariosPage() {
 
       if (!me.data?.empresa_id) throw new Error("No se pudo resolver empresa_id");
 
-      setEmpresaId(me.data.empresa_id);
+      // Empresa efectiva: si soy superadmin y hay impersonación activa, usamos esa empresa
+      const myRoleResolved = String(me.data.rol ?? "").trim().toLowerCase();
+      const impersonEmpresa = getCookie("impersonate_empresa_id");
+      const effectiveEmpresaId =
+        myRoleResolved === "superadmin" && impersonEmpresa && isUuid(impersonEmpresa)
+          ? impersonEmpresa
+          : me.data.empresa_id;
+
+      setEmpresaId(effectiveEmpresaId);
       setMiRol(me.data.rol ?? null);
       setMiUsuarioId(me.data.id);
 
@@ -238,7 +258,7 @@ export default function UsuariosPage() {
       const { data: emp } = await supabase
         .from("empresas")
         .select("plan_tipo")
-        .eq("id", me.data.empresa_id)
+        .eq("id", effectiveEmpresaId)
         .maybeSingle();
 
       setPlanTipo((emp as any)?.plan_tipo ?? null);
@@ -255,7 +275,7 @@ export default function UsuariosPage() {
       const { data: centrosData, error: centrosErr } = await supabase
         .from("centros_trabajo")
         .select("id,nombre,codigo,activo")
-        .eq("empresa_id", me.data.empresa_id)
+        .eq("empresa_id", effectiveEmpresaId)
         .eq("activo", true)
         .order("nombre", { ascending: true });
 
@@ -265,7 +285,7 @@ export default function UsuariosPage() {
       const { data: usuariosData, error: usuariosErr } = await supabase
         .from("usuarios")
         .select("id,nombre,email,activo,rol,centro_id,auth_user_id,last_login_at")
-        .eq("empresa_id", me.data.empresa_id)
+        .eq("empresa_id", effectiveEmpresaId)
         .order("nombre", { ascending: true });
 
       if (usuariosErr) throw usuariosErr;
