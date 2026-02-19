@@ -21,6 +21,36 @@ function toNum(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function isUuid(v: unknown) {
+  const s = String(v ?? "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function decodeBase64UrlJson(v: string): any | null {
+  try {
+    const json = Buffer.from(String(v || ""), "base64url").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function getImpersonatedEmpresaId(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  // Prefer the explicit non-httpOnly compat cookie
+  const compat = cookieStore.get("impersonate_empresa_id")?.value;
+  if (compat && isUuid(compat)) return compat;
+
+  // Fallback: decode the httpOnly cookie payload { empresa_id, usuario_id }
+  const packed = cookieStore.get("epp_impersonate")?.value;
+  if (packed) {
+    const obj = decodeBase64UrlJson(packed);
+    const eid = obj?.empresa_id;
+    if (eid && isUuid(eid)) return String(eid);
+  }
+
+  return null;
+}
+
 // Construye un ISO UTC para el inicio del día (00:00) en una zona horaria.
 function startOfTodayISO(tz: string) {
   const now = new Date();
@@ -110,10 +140,11 @@ export async function GET() {
     let empresaId: string | null = null;
     let usuarioInternoId: string | null = null;
     let activo: boolean | null = null;
+    let rol: string | null = null;
 
     const byAuth = await supabaseAuth
       .from("usuarios")
-      .select("id, empresa_id, activo")
+      .select("id, empresa_id, activo, rol")
       .eq("auth_user_id", authUserId)
       .maybeSingle();
 
@@ -121,11 +152,12 @@ export async function GET() {
       usuarioInternoId = byAuth.data.id;
       empresaId = byAuth.data.empresa_id as any;
       activo = (byAuth.data as any).activo ?? null;
+      rol = (byAuth.data as any).rol ?? null;
     } else if (authEmail) {
       // fallback por email (invitaciones/recovery) y linkear auth_user_id con service role
       const byEmail = await supabaseAdmin
         .from("usuarios")
-        .select("id, empresa_id, activo, auth_user_id")
+        .select("id, empresa_id, activo, auth_user_id, rol")
         .eq("email", authEmail)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -135,6 +167,7 @@ export async function GET() {
         usuarioInternoId = byEmail.data.id;
         empresaId = byEmail.data.empresa_id as any;
         activo = (byEmail.data as any).activo ?? null;
+        rol = (byEmail.data as any).rol ?? null;
 
         if (!byEmail.data.auth_user_id) {
           await supabaseAdmin
@@ -153,13 +186,18 @@ export async function GET() {
       return NextResponse.json({ error: "Usuario inactivo" }, { status: 403 });
     }
 
+    // ✅ Empresa efectiva: si soy superadmin y hay impersonación activa, usar esa empresa
+    const myRole = String(rol ?? "").trim().toLowerCase();
+    const impersonEmpresa = getImpersonatedEmpresaId(cookieStore);
+    const effectiveEmpresaId = myRole === "superadmin" && impersonEmpresa ? impersonEmpresa : empresaId;
+
     // ─────────────────────────────────────────────
     // 📦 STOCK TOTAL + STOCK CRÍTICO (excluye anulados)
     // ─────────────────────────────────────────────
     const { data: lotesStock, error: lotesErr } = await supabaseAdmin
       .from("lotes_epp")
       .select("categoria,nombre_epp,talla,cantidad_disponible,anulado")
-      .eq("empresa_id", empresaId)
+      .eq("empresa_id", effectiveEmpresaId)
       .eq("anulado", false)
       .gt("cantidad_disponible", 0);
 
@@ -186,7 +224,7 @@ export async function GET() {
     const { data: crits, error: critErr } = await supabaseAdmin
       .from("stock_criticos")
       .select("categoria,nombre_epp,talla,stock_critico")
-      .eq("empresa_id", empresaId);
+      .eq("empresa_id", effectiveEmpresaId);
 
     if (critErr) throw new Error(critErr.message);
 
@@ -222,7 +260,7 @@ export async function GET() {
     const { data: gasto6Meses, error: g6Err } = await supabaseAdmin
       .from("entrega_items")
       .select("costo_total_iva, entregas!inner(fecha_entrega, empresa_id)")
-      .eq("entregas.empresa_id", empresaId)
+      .eq("entregas.empresa_id", effectiveEmpresaId)
       .gte("entregas.fecha_entrega", start6Months);
 
     if (g6Err) throw new Error(g6Err.message);
@@ -254,7 +292,7 @@ export async function GET() {
     const { data: gastoItemsMesActual, error: gMesErr } = await supabaseAdmin
       .from("entrega_items")
       .select("costo_total_iva, entregas!inner(fecha_entrega, empresa_id)")
-      .eq("entregas.empresa_id", empresaId)
+      .eq("entregas.empresa_id", effectiveEmpresaId)
       .gte("entregas.fecha_entrega", inicioMesISO);
 
     if (gMesErr) throw new Error(gMesErr.message);
@@ -278,7 +316,7 @@ export async function GET() {
         )
       `
       )
-      .eq("entregas.empresa_id", empresaId)
+      .eq("entregas.empresa_id", effectiveEmpresaId)
       .gte("entregas.fecha_entrega", inicioMesISO);
 
     if (gCentroErr) throw new Error(gCentroErr.message);
@@ -310,7 +348,7 @@ export async function GET() {
         )
       `
       )
-      .eq("entregas.empresa_id", empresaId)
+      .eq("entregas.empresa_id", effectiveEmpresaId)
       .gte("entregas.fecha_entrega", inicioMesISO);
 
     if (gTrabErr) throw new Error(gTrabErr.message);
@@ -332,7 +370,7 @@ export async function GET() {
     const { data: ultimoIngreso, error: uIngErr } = await supabaseAdmin
       .from("lotes_epp")
       .select("created_at, fecha_ingreso")
-      .eq("empresa_id", empresaId)
+      .eq("empresa_id", effectiveEmpresaId)
       .eq("anulado", false)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -343,7 +381,7 @@ export async function GET() {
     const { data: ultimoEgreso, error: uEgrErr } = await supabaseAdmin
       .from("entregas")
       .select("created_at, fecha_entrega")
-      .eq("empresa_id", empresaId)
+      .eq("empresa_id", effectiveEmpresaId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -356,7 +394,7 @@ export async function GET() {
     const { count: egresosHoy, error: eHoyErr } = await supabaseAdmin
       .from("entregas")
       .select("id", { count: "exact", head: true })
-      .eq("empresa_id", empresaId)
+      .eq("empresa_id", effectiveEmpresaId)
       .gte("fecha_entrega", inicioHoyISO);
 
     if (eHoyErr) throw new Error(eHoyErr.message);
@@ -377,7 +415,10 @@ export async function GET() {
       gasto_mes_actual: gastoMesActual,
       egresos_hoy: egresosHoy || 0,
       _debug: {
-        empresa_id: empresaId,
+        empresa_id: effectiveEmpresaId,
+        empresa_id_real: empresaId,
+        rol: myRole,
+        impersonate_empresa_id: impersonEmpresa,
         usuario_id: usuarioInternoId,
         inicio_hoy_iso: inicioHoyISO,
         inicio_mes_iso: inicioMesISO,
