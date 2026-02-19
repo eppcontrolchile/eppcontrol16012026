@@ -264,38 +264,42 @@ export async function POST(req: Request) {
     expireCookie(res, COOKIE_EMPRESA);
     expireCookie(res, COOKIE_USUARIO);
 
-    res.cookies.set({
+    const cookieCommon = {
+      sameSite: "lax" as const,
+      secure: IS_PROD,
+      path: "/",
+      maxAge: MAX_AGE_SECONDS,
+    };
+
+    // IMPORTANT: write both host-only and (in prod) domain-wide variants.
+    // This prevents a stale host-only cookie (e.g., on www) from overriding the new domain cookie.
+    const setCookieBoth = (c: CookieWrite) => {
+      // host-only
+      res.cookies.set({ ...c, domain: undefined });
+      // domain-wide (apex + www)
+      if (COOKIE_DOMAIN) res.cookies.set({ ...c, domain: COOKIE_DOMAIN });
+    };
+
+    setCookieBoth({
       name: COOKIE_NAME,
       value: encodeCookie({ empresa_id, usuario_id }),
       httpOnly: true,
-      sameSite: "lax",
-      secure: IS_PROD,
-      path: "/",
-      domain: COOKIE_DOMAIN,
-      maxAge: MAX_AGE_SECONDS,
+      ...cookieCommon,
     });
 
     // Compat: algunos flujos leen cookies separadas por empresa/usuario
-    res.cookies.set({
+    setCookieBoth({
       name: COOKIE_EMPRESA,
       value: empresa_id,
       httpOnly: false,
-      sameSite: "lax",
-      secure: IS_PROD,
-      path: "/",
-      domain: COOKIE_DOMAIN,
-      maxAge: MAX_AGE_SECONDS,
+      ...cookieCommon,
     });
 
-    res.cookies.set({
+    setCookieBoth({
       name: COOKIE_USUARIO,
       value: usuario_id,
       httpOnly: false,
-      sameSite: "lax",
-      secure: IS_PROD,
-      path: "/",
-      domain: COOKIE_DOMAIN,
-      maxAge: MAX_AGE_SECONDS,
+      ...cookieCommon,
     });
 
     res.headers.set("Cache-Control", "no-store");
