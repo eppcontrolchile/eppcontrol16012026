@@ -61,7 +61,8 @@ async function requireAdminForEmpresa(empresa_id: string) {
   if (me.empresa_id !== empresa_id) {
     return { ok: false as const, status: 403, reason: "empresa-mismatch" };
   }
-  if (me.rol !== "admin") {
+  const myRole = String(me.rol ?? "").toLowerCase();
+  if (myRole !== "admin" && myRole !== "superadmin") {
     return { ok: false as const, status: 403, reason: "forbidden-not-admin" };
   }
 
@@ -74,9 +75,20 @@ export async function POST(req: Request) {
     const empresa_id = String(body?.empresa_id || "");
     const usuario_id = String(body?.usuario_id || body?.id || "");
 
-    // Normalizar rol (la app ya no usa `solo_lectura`)
+    // Normalizar rol
     const rolNombreRaw = String(body?.rol || "").trim().toLowerCase();
-    const rolNombre = rolNombreRaw === "solo_lectura" ? "gerencia" : rolNombreRaw;
+
+    // Compatibilidad histórica / entradas humanas
+    // - solo_lectura (legacy) -> gerencia
+    // - supervisor (legacy) -> jefe_area
+    // - Variantes de jefe de área -> jefe_area
+    const rolNombre =
+      rolNombreRaw === "solo_lectura" ? "gerencia" :
+      rolNombreRaw === "supervisor" ? "jefe_area" :
+      rolNombreRaw === "jefe de área" ? "jefe_area" :
+      rolNombreRaw === "jefe de area" ? "jefe_area" :
+      rolNombreRaw === "jefe_area" ? "jefe_area" :
+      rolNombreRaw;
 
     if (!empresa_id || !usuario_id || !rolNombre) {
       return NextResponse.json(
@@ -85,8 +97,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // Guardrail: solo roles soportados por producto
-    const allowed = new Set(["admin", "supervisor", "bodega", "solo_entrega", "gerencia"]);
+    // Guardrail: solo roles soportados por producto (no incluye superadmin)
+    const allowed = new Set([
+      "admin",
+      "jefe_area",
+      "bodega",
+      "solo_entrega",
+      "supervisor_terreno",
+      "gerencia",
+    ]);
     if (!allowed.has(rolNombre)) {
       return NextResponse.json(
         { ok: false, reason: "rol-not-allowed" },
@@ -165,6 +184,50 @@ export async function POST(req: Request) {
         { ok: false, reason: "empresa-mismatch-target" },
         { status: 403 }
       );
+    }
+
+    // Reglas de negocio: supervisor_terreno debe tener centro_id asignado
+    if (rolNombre === "supervisor_terreno") {
+      const centroIdFromBody = String(body?.centro_id ?? body?.centroId ?? "").trim();
+
+      // Si no viene en el payload, revisa si ya tiene uno asignado
+      const { data: centroCheck, error: centroCheckErr } = await admin
+        .from("usuarios")
+        .select("centro_id")
+        .eq("id", usuario_id)
+        .maybeSingle();
+
+      if (centroCheckErr) {
+        return NextResponse.json(
+          { ok: false, reason: "centro-check-failed" },
+          { status: 500 }
+        );
+      }
+
+      const existingCentroId = (centroCheck as any)?.centro_id ? String((centroCheck as any).centro_id) : "";
+      const finalCentroId = centroIdFromBody || existingCentroId;
+
+      if (!finalCentroId) {
+        return NextResponse.json(
+          { ok: false, reason: "missing-centro_id-for-supervisor" },
+          { status: 400 }
+        );
+      }
+
+      // Si viene centro_id en el payload, persistirlo
+      if (centroIdFromBody) {
+        const { error: setCentroErr } = await admin
+          .from("usuarios")
+          .update({ centro_id: centroIdFromBody })
+          .eq("id", usuario_id);
+
+        if (setCentroErr) {
+          return NextResponse.json(
+            { ok: false, reason: "set-centro-failed" },
+            { status: 500 }
+          );
+        }
+      }
     }
 
     // Protección crítica: no permitir dejar a la empresa sin admins activos

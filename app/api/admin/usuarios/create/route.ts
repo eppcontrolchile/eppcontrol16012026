@@ -23,12 +23,22 @@ function getAppBaseUrl() {
     "https://www.eppcontrol.cl"
   ).replace(/\/$/, "");
 }
+function isUuid(v: unknown) {
+  const s = String(v ?? "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
 
-function buildAuthRedirect(nextPath: string) {
-  const base = getAppBaseUrl();
-  const next = nextPath.startsWith("/") ? nextPath : "/" + nextPath;
-  const q = new URLSearchParams({ next }).toString();
-  return `${base}/auth/callback?${q}`;
+function normalizeRol(raw: unknown) {
+  const r = String(raw ?? "").trim().toLowerCase();
+  if (!r) return "solo_entrega";
+
+  // compat / inputs humanos
+  if (r === "solo_lectura") return "gerencia";
+  if (r === "jefe de área" || r === "jefe_area" || r === "jefe-area") return "jefe_area";
+  if (r === "supervisor" || r === "supervisor terreno" || r === "supervisor_terreno") return "supervisor_terreno";
+
+  // ya viene en formato correcto
+  return r;
 }
 
 export async function POST(req: Request) {
@@ -37,10 +47,25 @@ export async function POST(req: Request) {
     const empresa_id = String(body?.empresa_id || "");
     const nombre = String(body?.nombre || "").trim();
     const email = String(body?.email || "").trim().toLowerCase();
-    const rol = String(body?.rol || "solo_entrega").trim();
+    const rol = normalizeRol(body?.rol);
+    const centro_id_raw = String(body?.centro_id ?? body?.centroId ?? "").trim();
+    const centro_id = centro_id_raw ? centro_id_raw : null;
+    const shouldWriteCentro = rol === "supervisor_terreno" || !!centro_id_raw;
 
     if (!empresa_id || !nombre || !email) {
       return NextResponse.json({ ok: false, reason: "missing-fields" }, { status: 400 });
+    }
+
+    if (!isUuid(empresa_id)) {
+      return NextResponse.json({ ok: false, reason: "invalid-empresa_id" }, { status: 400 });
+    }
+
+    // Guardrails env
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return NextResponse.json({ ok: false, reason: "missing-public-supabase-env" }, { status: 500 });
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json({ ok: false, reason: "missing-service-role-key" }, { status: 500 });
     }
 
     // Auth caller (cookie session) — Next 16: cookies() es async y @supabase/ssr funciona mejor con getAll/setAll
@@ -67,7 +92,7 @@ export async function POST(req: Request) {
     const { data: authData } = await supabase.auth.getUser();
     if (!authData?.user) return NextResponse.json({ ok: false, reason: "not-auth" }, { status: 401 });
 
-    // Validar admin interno (misma empresa)
+    // Validar admin interno (misma empresa) o superadmin
     const { data: me } = await supabase
       .from("usuarios")
       .select("id, empresa_id, rol, activo")
@@ -75,8 +100,18 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (!me?.activo) return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
-    if (me.empresa_id !== empresa_id) return NextResponse.json({ ok: false, reason: "empresa-mismatch" }, { status: 403 });
-    if (me.rol !== "admin") return NextResponse.json({ ok: false, reason: "forbidden" }, { status: 403 });
+
+    const myRole = String(me.rol ?? "").toLowerCase();
+    const isSuperadmin = myRole === "superadmin";
+
+    // admin: solo puede administrar su propia empresa
+    if (!isSuperadmin && me.empresa_id !== empresa_id) {
+      return NextResponse.json({ ok: false, reason: "empresa-mismatch" }, { status: 403 });
+    }
+
+    if (myRole !== "admin" && !isSuperadmin) {
+      return NextResponse.json({ ok: false, reason: "forbidden" }, { status: 403 });
+    }
 
     // Gating plan advanced (password y roles avanzados)
     const { data: emp } = await supabase
@@ -91,9 +126,28 @@ export async function POST(req: Request) {
     }
 
     // Defense-in-depth: roles permitidos por producto
-    const allowedRoles = new Set(["admin", "supervisor", "bodega", "solo_entrega", "gerencia"]);
+    const allowedRoles = new Set([
+      "admin",
+      "jefe_area",
+      "bodega",
+      "solo_entrega",
+      "supervisor_terreno",
+      "gerencia",
+    ]);
     if (!allowedRoles.has(rol)) {
       return NextResponse.json({ ok: false, reason: "rol-not-allowed" }, { status: 400 });
+    }
+
+    // Regla negocio: supervisor_terreno requiere centro_id
+    if (rol === "supervisor_terreno" && !centro_id) {
+      return NextResponse.json({ ok: false, reason: "missing-centro_id-for-supervisor" }, { status: 400 });
+    }
+
+    // Si viene centro_id, validar que sea UUID y pertenezca a la empresa
+    if (centro_id) {
+      if (!isUuid(centro_id)) {
+        return NextResponse.json({ ok: false, reason: "invalid-centro_id" }, { status: 400 });
+      }
     }
 
     // Admin client (service role)
@@ -101,6 +155,22 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
+
+    if (centro_id) {
+      const { data: centroRow, error: centroErr } = await admin
+        .from("centros_trabajo")
+        .select("id, empresa_id")
+        .eq("id", centro_id)
+        .maybeSingle();
+
+      if (centroErr) {
+        return NextResponse.json({ ok: false, reason: "centro-lookup-failed" }, { status: 500 });
+      }
+
+      if (!centroRow?.id || String((centroRow as any).empresa_id) !== empresa_id) {
+        return NextResponse.json({ ok: false, reason: "centro-not-found" }, { status: 400 });
+      }
+    }
 
     // Rol id (tabla roles)
     const { data: rolRow } = await admin
@@ -126,7 +196,7 @@ export async function POST(req: Request) {
     if (!usuarioId) {
       const { data: ins } = await admin
         .from("usuarios")
-        .insert({ empresa_id, nombre, email, activo: true, rol })
+        .insert({ empresa_id, nombre, email, activo: true, rol, centro_id: shouldWriteCentro ? centro_id : null })
         .select("id")
         .single();
 
@@ -134,9 +204,12 @@ export async function POST(req: Request) {
       usuarioId = ins.id;
     } else {
       // Si ya existía, lo mantenemos activo y actualizamos nombre/rol (último gana)
+      const updatePayload: any = { nombre, activo: true, rol };
+      if (shouldWriteCentro) updatePayload.centro_id = centro_id;
+
       await admin
         .from("usuarios")
-        .update({ nombre, activo: true, rol })
+        .update(updatePayload)
         .eq("id", usuarioId);
     }
 
@@ -153,32 +226,41 @@ export async function POST(req: Request) {
     // - Si el email ya existe en Auth: recovery (sirve para reenviar acceso / reset)
     let actionLink: string | null = null;
 
-      const invite = await admin.auth.admin.generateLink({
-        type: "invite",
+    const invite = await admin.auth.admin.generateLink({
+      type: "invite",
+      email,
+      options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
+    });
+
+    const inviteEmailExists = (invite.error as any)?.code === "email_exists";
+
+    const extractActionLink = (x: any) =>
+      x?.data?.properties?.action_link ??
+      x?.data?.action_link ??
+      x?.properties?.action_link ??
+      x?.action_link ??
+      null;
+
+    if (inviteEmailExists) {
+      const recovery = await admin.auth.admin.generateLink({
+        type: "recovery",
         email,
         options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
       });
 
-    const inviteEmailExists = (invite.error as any)?.code === "email_exists";
-
-    if (inviteEmailExists) {
-        const recovery = await admin.auth.admin.generateLink({
-          type: "recovery",
-          email,
-          options: { redirectTo: `${getAppBaseUrl()}/auth/set-password` },
-        });
-
-      if (recovery.error || !recovery.data?.properties?.action_link) {
+      const recLink = extractActionLink(recovery);
+      if (recovery.error || !recLink) {
         return NextResponse.json({ ok: false, reason: "recovery-link-failed" }, { status: 500 });
       }
 
-      actionLink = recovery.data.properties.action_link;
+      actionLink = recLink;
     } else {
-      if (invite.error || !invite.data?.properties?.action_link) {
+      const invLink = extractActionLink(invite);
+      if (invite.error || !invLink) {
         return NextResponse.json({ ok: false, reason: "invite-link-failed" }, { status: 500 });
       }
 
-      actionLink = invite.data.properties.action_link;
+      actionLink = invLink;
     }
 
     const resend = getResend();

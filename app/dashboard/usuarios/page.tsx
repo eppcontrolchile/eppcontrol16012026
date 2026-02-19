@@ -13,19 +13,78 @@ type UsuarioRow = {
   email: string;
   activo: boolean;
   rol: string | null;
+  centro_id?: string | null;
   auth_user_id?: string | null;
   last_login_at?: string | null;
 };
 
+type CentroTrabajo = { id: string; nombre: string; codigo?: string | null; activo?: boolean | null };
+
+type NuevoUsuario = {
+  nombre: string;
+  email: string;
+  rol: string;
+  centro_id?: string;
+};
+
+
+function prettyRoleName(role: string | null | undefined) {
+  const r = String(role ?? "").trim().toLowerCase();
+  switch (r) {
+    case "admin":
+      return "admin";
+    case "jefe_area":
+      return "jefe de área";
+    case "bodega":
+      return "bodega";
+    case "solo_entrega":
+      return "solo entrega";
+    case "supervisor_terreno":
+      return "supervisor terreno";
+    case "gerencia":
+      return "gerencia";
+    case "superadmin":
+      return "superadmin";
+    default:
+      return r || "—";
+  }
+}
+
 function roleLabel(role: string | null | undefined) {
-  return (role || "").trim() || "—";
+  return prettyRoleName(role);
+}
+
+function roleDescription(role: string | null | undefined) {
+  const r = String(role ?? "").trim().toLowerCase();
+  switch (r) {
+    case "admin":
+      return "Opera todo: costos, usuarios, configuración y administración completa.";
+    case "superadmin":
+      return "Soporte/administración global (EPP Control).";
+    case "jefe_area":
+      return "Entrega, ve costos y stock; crea trabajadores y centros de trabajo.";
+    case "bodega":
+      return "Entrega, ingresa EPP y ve stock.";
+    case "solo_entrega":
+      return "Solo realiza entregas (ideal para celular).";
+    case "supervisor_terreno":
+      return "Solo entrega desde su Centro asignado y es responsable del stock de ese Centro.";
+    case "gerencia":
+      return "Lectura completa (reportes y control).";
+    default:
+      return "";
+  }
 }
 
 function roleChipClass(role: string) {
   switch (role) {
     case "admin":
       return "bg-red-50 text-red-700 border-red-200";
-    case "supervisor":
+    case "superadmin":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "jefe_area":
+      return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    case "supervisor_terreno":
       return "bg-sky-50 text-sky-700 border-sky-200";
     case "bodega":
       return "bg-amber-50 text-amber-800 border-amber-200";
@@ -71,6 +130,7 @@ export default function UsuariosPage() {
 
   const [roles, setRoles] = useState<Rol[]>([]);
   const [usuarios, setUsuarios] = useState<UsuarioRow[]>([]);
+  const [centros, setCentros] = useState<CentroTrabajo[]>([]);
 
   // 🔎 buscador
   const [q, setQ] = useState("");
@@ -118,7 +178,7 @@ export default function UsuariosPage() {
   const [confirmOff, setConfirmOff] = useState<null | { id: string; nombre: string }>(null);
 
   // Crear usuario: default seguro (sin solo_lectura)
-  const [nuevo, setNuevo] = useState({ nombre: "", email: "", rol: "bodega" });
+  const [nuevo, setNuevo] = useState<NuevoUsuario>({ nombre: "", email: "", rol: "bodega", centro_id: "" });
 
   const rolesByName = useMemo(() => {
     const m = new Map<string, Rol>();
@@ -184,16 +244,27 @@ export default function UsuariosPage() {
 
       if (rolesErr) throw rolesErr;
 
-      // 4) Usuarios empresa
+      // 4) Centros de trabajo (para asignar supervisor_terreno)
+      const { data: centrosData, error: centrosErr } = await supabase
+        .from("centros_trabajo")
+        .select("id,nombre,codigo,activo")
+        .eq("empresa_id", me.data.empresa_id)
+        .eq("activo", true)
+        .order("nombre", { ascending: true });
+
+      if (centrosErr) throw centrosErr;
+
+      // 5) Usuarios empresa
       const { data: usuariosData, error: usuariosErr } = await supabase
         .from("usuarios")
-        .select("id,nombre,email,activo,rol,auth_user_id,last_login_at")
+        .select("id,nombre,email,activo,rol,centro_id,auth_user_id,last_login_at")
         .eq("empresa_id", me.data.empresa_id)
         .order("nombre", { ascending: true });
 
       if (usuariosErr) throw usuariosErr;
 
       setRoles((rolesData as Rol[]) ?? []);
+      setCentros((centrosData as CentroTrabajo[]) ?? []);
       setUsuarios((usuariosData as UsuarioRow[]) ?? []);
     } catch (e: any) {
       console.error("USUARIOS PAGE LOAD ERROR", e);
@@ -243,12 +314,19 @@ export default function UsuariosPage() {
       if (u.rol !== "admin") throw new Error("No puedes quitarte el rol admin.");
     }
 
+    const rolActual = String(u.rol ?? "").trim().toLowerCase();
+    if (rolActual === "supervisor_terreno" && !u.centro_id) {
+      throw new Error("Supervisor terreno requiere un Centro de Trabajo.");
+    }
+
     const { error: err } = await supabase
       .from("usuarios")
       .update({
         nombre: u.nombre.trim(),
         email: u.email.trim().toLowerCase(),
         activo: !!u.activo,
+        // mantener guardado; sólo es obligatorio si es supervisor_terreno
+        centro_id: u.centro_id ?? null,
       })
       .eq("id", u.id);
 
@@ -264,6 +342,11 @@ export default function UsuariosPage() {
     if (!empresaId) return;
     if (!nuevo.nombre.trim() || !nuevo.email.trim()) {
       setError("Completa nombre y email.");
+      return;
+    }
+    const rolNuevo = String(nuevo.rol ?? "").trim().toLowerCase();
+    if (rolNuevo === "supervisor_terreno" && !String(nuevo.centro_id ?? "").trim()) {
+      setError("Para 'supervisor terreno' debes asignar un Centro de Trabajo.");
       return;
     }
 
@@ -282,6 +365,7 @@ export default function UsuariosPage() {
           nombre: nuevo.nombre.trim(),
           email: nuevo.email.trim().toLowerCase(),
           rol: nuevo.rol,
+          centro_id: String(nuevo.centro_id ?? "").trim() || null,
         }),
       });
 
@@ -291,7 +375,7 @@ export default function UsuariosPage() {
       }
 
       setOk("Usuario creado. Se envió correo para crear contraseña.");
-      setNuevo({ nombre: "", email: "", rol: "bodega" });
+      setNuevo({ nombre: "", email: "", rol: "bodega", centro_id: "" });
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? "Error creando usuario");
@@ -392,7 +476,10 @@ export default function UsuariosPage() {
     );
   }
 
-  if (miRol !== "admin") {
+  const myRole = String(miRol ?? "").trim().toLowerCase();
+  const canManageUsers = myRole === "admin" || myRole === "superadmin";
+
+  if (!canManageUsers) {
     return (
       <div className="rounded-lg border bg-white p-4 text-sm text-zinc-700">
         No tienes permisos para administrar usuarios y roles.
@@ -425,13 +512,16 @@ export default function UsuariosPage() {
             <b>admin</b>: opera todo, ve costos, define usuarios, administra todo.
           </li>
           <li>
-            <b>supervisor</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.
+            <b>jefe de área</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.
           </li>
           <li>
             <b>bodega</b>: entrega, ingresa EPP, ve stock.
           </li>
           <li>
-            <b>solo_entrega</b>: solo entrega (ideal móvil / celular).
+            <b>solo entrega</b>: solo entrega (ideal móvil / celular).
+          </li>
+          <li>
+            <b>supervisor terreno</b>: solo entrega desde su centro de trabajo asignado y es responsable de su stock.
           </li>
           <li>
             <b>gerencia</b>: lectura completa (ideal reportes y control).
@@ -459,7 +549,7 @@ export default function UsuariosPage() {
       <div className="space-y-3 rounded-xl border bg-white p-4">
         <p className="font-medium">Crear usuario</p>
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
           <input
             className="input"
             placeholder="Nombre"
@@ -481,18 +571,35 @@ export default function UsuariosPage() {
               ? roles
               : [
                   { id: "x", nombre: "admin" },
-                  { id: "x", nombre: "supervisor" },
+                  { id: "x", nombre: "jefe_area" },
                   { id: "x", nombre: "bodega" },
                   { id: "x", nombre: "solo_entrega" },
+                  { id: "x", nombre: "supervisor_terreno" },
                   { id: "x", nombre: "gerencia" },
                 ]
             ).map((r) => (
               <option key={r.nombre} value={r.nombre}>
-                {r.nombre}
+                {prettyRoleName(r.nombre)}
               </option>
             ))}
           </select>
-
+          <div className="sm:col-span-5 -mt-1 text-xs text-zinc-500">
+            {roleDescription(nuevo.rol)}
+          </div>
+          {String(nuevo.rol).toLowerCase() === "supervisor_terreno" && (
+            <select
+              className="input"
+              value={nuevo.centro_id || ""}
+              onChange={(e) => setNuevo((p) => ({ ...p, centro_id: e.target.value }))}
+            >
+              <option value="">Selecciona Centro de Trabajo…</option>
+              {centros.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             onClick={crearUsuario}
             disabled={!isAdvanced || creating}
@@ -517,6 +624,7 @@ export default function UsuariosPage() {
               <th onClick={() => handleOrden("rol")} className={thClass("rol")}>
                 Rol{arrow("rol")}
               </th>
+              <th className="p-2 text-left">Centro</th>
               <th onClick={() => handleOrden("last_login_at")} className={thClass("last_login_at")}>
                 Última conexión{arrow("last_login_at")}
               </th>
@@ -530,7 +638,8 @@ export default function UsuariosPage() {
           <tbody>
             {usuariosOrdenados.map((u) => {
               const isMe = u.id === miUsuarioId;
-              const r = roleLabel(u.rol);
+              const rawRole = String(u.rol ?? "").trim().toLowerCase();
+              const r = roleLabel(rawRole);
 
               return (
                 <tr key={u.id} className="border-t">
@@ -574,14 +683,15 @@ export default function UsuariosPage() {
                         ? roles
                         : [
                             { id: "x", nombre: "admin" },
-                            { id: "x", nombre: "supervisor" },
+                            { id: "x", nombre: "jefe_area" },
                             { id: "x", nombre: "bodega" },
                             { id: "x", nombre: "solo_entrega" },
+                            { id: "x", nombre: "supervisor_terreno" },
                             { id: "x", nombre: "gerencia" },
                           ]
                       ).map((rr) => (
                         <option key={rr.nombre} value={rr.nombre}>
-                          {rr.nombre}
+                          {prettyRoleName(rr.nombre)}
                         </option>
                       ))}
                     </select>
@@ -590,11 +700,36 @@ export default function UsuariosPage() {
                         (Protegido) No puedes cambiar tu propio rol.
                       </p>
                     )}
+                    {roleDescription(u.rol) && (
+                      <p className="mt-1 text-xs text-zinc-500">{roleDescription(u.rol)}</p>
+                    )}
                     <div className="mt-1">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${roleChipClass(r)}`}>
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${roleChipClass(rawRole)}`}>
                         {r}
                       </span>
                     </div>
+                  </td>
+
+                  <td className="p-2">
+                    {String(u.rol ?? "").toLowerCase() === "supervisor_terreno" ? (
+                      <select
+                        className="input"
+                        value={u.centro_id ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setUsuarios((prev) => prev.map((x) => (x.id === u.id ? { ...x, centro_id: v || null } : x)));
+                        }}
+                      >
+                        <option value="">Selecciona Centro…</option>
+                        {centros.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-sm text-zinc-500">—</span>
+                    )}
                   </td>
 
                   <td className="p-2 text-sm text-zinc-600">{formatLastLogin(u.last_login_at)}</td>
