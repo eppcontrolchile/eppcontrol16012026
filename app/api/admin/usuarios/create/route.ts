@@ -183,43 +183,72 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, reason: "rol-not-found" }, { status: 400 });
     }
 
-    // Crear/actualizar usuario interno por email (idempotente)
+    // Crear usuario interno por email (idempotente, pero **sin** pisar datos existentes)
     const { data: existing } = await admin
       .from("usuarios")
-      .select("id")
+      .select("id, rol, centro_id")
       .eq("empresa_id", empresa_id)
       .eq("email", email)
       .maybeSingle();
 
     let usuarioId: string | null = existing?.id ?? null;
+    let created = false;
 
     if (!usuarioId) {
       const { data: ins } = await admin
         .from("usuarios")
-        .insert({ empresa_id, nombre, email, activo: true, rol, centro_id: shouldWriteCentro ? centro_id : null })
+        .insert({
+          empresa_id,
+          nombre,
+          email,
+          activo: true,
+          rol,
+          centro_id: shouldWriteCentro ? centro_id : null,
+        })
         .select("id")
         .single();
 
-      if (!ins?.id) return NextResponse.json({ ok: false, reason: "usuarios-insert-failed" }, { status: 500 });
-      usuarioId = ins.id;
-    } else {
-      // Si ya existía, lo mantenemos activo y actualizamos nombre/rol (último gana)
-      const updatePayload: any = { nombre, activo: true, rol };
-      if (shouldWriteCentro) updatePayload.centro_id = centro_id;
+      if (!ins?.id) {
+        return NextResponse.json({ ok: false, reason: "usuarios-insert-failed" }, { status: 500 });
+      }
 
-      await admin
-        .from("usuarios")
-        .update(updatePayload)
-        .eq("id", usuarioId);
+      usuarioId = ins.id;
+      created = true;
+    } else {
+      // Si ya existe, NO sobreescribimos su rol/nombre/centro.
+      // Solo permitimos reenviar acceso (invite/recovery), pero el admin debe editarlo explícitamente en la UI.
+      const existingRol = String((existing as any)?.rol ?? "").trim().toLowerCase();
+      const existingCentro = (existing as any)?.centro_id ?? null;
+
+      const requestedRol = String(rol ?? "").trim().toLowerCase();
+      const requestedCentro = shouldWriteCentro ? (centro_id ?? null) : null;
+
+      const rolDiffers = !!requestedRol && !!existingRol && requestedRol !== existingRol;
+      const centroDiffers = shouldWriteCentro && requestedCentro !== existingCentro;
+
+      if (rolDiffers || centroDiffers) {
+        return NextResponse.json(
+          {
+            ok: false,
+            reason: "usuario-exists",
+            detail: "El usuario ya existe. No se sobreescribe rol/centro por seguridad. Edita el usuario existente desde la tabla y luego reenvía el link.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
-    // usuarios_roles (1 rol)
-    await admin.from("usuarios_roles").delete().eq("usuario_id", usuarioId);
-    const { error: urErr } = await admin.from("usuarios_roles").insert({
-      usuario_id: usuarioId,
-      rol_id: rolRow.id,
-    });
-    if (urErr) return NextResponse.json({ ok: false, reason: "usuarios_roles-failed" }, { status: 500 });
+    // usuarios_roles (1 rol) — solo en creación (evita pisar roles existentes)
+    if (created) {
+      await admin.from("usuarios_roles").delete().eq("usuario_id", usuarioId);
+      const { error: urErr } = await admin.from("usuarios_roles").insert({
+        usuario_id: usuarioId,
+        rol_id: rolRow.id,
+      });
+      if (urErr) {
+        return NextResponse.json({ ok: false, reason: "usuarios_roles-failed" }, { status: 500 });
+      }
+    }
 
     // Invite / Recovery link -> set-password (idempotente)
     // - Nuevo usuario: invite
@@ -284,7 +313,7 @@ export async function POST(req: Request) {
         `<p>Equipo de soporte de EPP Control</p>`,
     });
 
-    return NextResponse.json({ ok: true, created: true, usuario_id: usuarioId });
+    return NextResponse.json({ ok: true, created, usuario_id: usuarioId });
   } catch (e: any) {
     console.error("ADMIN CREATE USER ERROR:", e);
     return NextResponse.json({ ok: false, reason: e?.message ?? "unknown" }, { status: 500 });

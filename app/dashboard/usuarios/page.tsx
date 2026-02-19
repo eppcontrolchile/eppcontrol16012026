@@ -43,8 +43,6 @@ function prettyRoleName(role: string | null | undefined) {
       return "supervisor terreno";
     case "gerencia":
       return "gerencia";
-    case "superadmin":
-      return "superadmin";
     default:
       return r || "—";
   }
@@ -59,8 +57,6 @@ function roleDescription(role: string | null | undefined) {
   switch (r) {
     case "admin":
       return "Opera todo: costos, usuarios, configuración y administración completa.";
-    case "superadmin":
-      return "Soporte/administración global (EPP Control).";
     case "jefe_area":
       return "Entrega, ve costos y stock; crea trabajadores y centros de trabajo.";
     case "bodega":
@@ -79,8 +75,6 @@ function roleDescription(role: string | null | undefined) {
 function roleChipClass(role: string) {
   switch (role) {
     case "admin":
-      return "bg-red-50 text-red-700 border-red-200";
-    case "superadmin":
       return "bg-red-50 text-red-700 border-red-200";
     case "jefe_area":
       return "bg-indigo-50 text-indigo-700 border-indigo-200";
@@ -184,6 +178,21 @@ export default function UsuariosPage() {
     const m = new Map<string, Rol>();
     roles.forEach((r) => m.set(r.nombre, r));
     return m;
+  }, [roles]);
+
+  const selectableRoles = useMemo(() => {
+    const base: Rol[] = roles.length
+      ? roles
+      : [
+          { id: "x", nombre: "admin" },
+          { id: "x", nombre: "jefe_area" },
+          { id: "x", nombre: "bodega" },
+          { id: "x", nombre: "solo_entrega" },
+          { id: "x", nombre: "supervisor_terreno" },
+          { id: "x", nombre: "gerencia" },
+        ];
+
+    return base.filter((r) => String(r.nombre || "").trim().toLowerCase() !== "superadmin");
   }, [roles]);
 
   async function loadAll() {
@@ -314,6 +323,11 @@ export default function UsuariosPage() {
       if (u.rol !== "admin") throw new Error("No puedes quitarte el rol admin.");
     }
 
+    const rolRequested = String(u.rol ?? "").trim().toLowerCase();
+    if (rolRequested === "superadmin") {
+      throw new Error("Rol inválido.");
+    }
+
     const rolActual = String(u.rol ?? "").trim().toLowerCase();
     if (rolActual === "supervisor_terreno" && !u.centro_id) {
       throw new Error("Supervisor terreno requiere un Centro de Trabajo.");
@@ -345,6 +359,10 @@ export default function UsuariosPage() {
       return;
     }
     const rolNuevo = String(nuevo.rol ?? "").trim().toLowerCase();
+    if (rolNuevo === "superadmin") {
+      setError("Rol inválido.");
+      return;
+    }
     if (rolNuevo === "supervisor_terreno" && !String(nuevo.centro_id ?? "").trim()) {
       setError("Para 'supervisor terreno' debes asignar un Centro de Trabajo.");
       return;
@@ -567,17 +585,7 @@ export default function UsuariosPage() {
             value={nuevo.rol}
             onChange={(e) => setNuevo((p) => ({ ...p, rol: e.target.value }))}
           >
-            {(roles.length
-              ? roles
-              : [
-                  { id: "x", nombre: "admin" },
-                  { id: "x", nombre: "jefe_area" },
-                  { id: "x", nombre: "bodega" },
-                  { id: "x", nombre: "solo_entrega" },
-                  { id: "x", nombre: "supervisor_terreno" },
-                  { id: "x", nombre: "gerencia" },
-                ]
-            ).map((r) => (
+            {selectableRoles.map((r) => (
               <option key={r.nombre} value={r.nombre}>
                 {prettyRoleName(r.nombre)}
               </option>
@@ -679,17 +687,7 @@ export default function UsuariosPage() {
                         );
                       }}
                     >
-                      {(roles.length
-                        ? roles
-                        : [
-                            { id: "x", nombre: "admin" },
-                            { id: "x", nombre: "jefe_area" },
-                            { id: "x", nombre: "bodega" },
-                            { id: "x", nombre: "solo_entrega" },
-                            { id: "x", nombre: "supervisor_terreno" },
-                            { id: "x", nombre: "gerencia" },
-                          ]
-                      ).map((rr) => (
+                      {selectableRoles.map((rr) => (
                         <option key={rr.nombre} value={rr.nombre}>
                           {prettyRoleName(rr.nombre)}
                         </option>
