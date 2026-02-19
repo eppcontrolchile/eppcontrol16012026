@@ -212,7 +212,9 @@ export default function UsuariosPage() {
         .eq("auth_user_id", au.user.id)
         .maybeSingle();
 
-      // Fallback: si no existe por auth_user_id, intenta por email y linkea auth_user_id
+      // Fallback: si no existe por auth_user_id, intenta por email.
+      // Seguridad: NO linkear/actualizar auth_user_id desde el cliente.
+      // Esto puede “pisar” cuentas (incluido superadmin) si hay colisiones de email o registros históricos.
       if (!me.data?.id) {
         const byEmail = await supabase
           .from("usuarios")
@@ -221,11 +223,7 @@ export default function UsuariosPage() {
           .maybeSingle();
 
         if (byEmail.data?.id) {
-          await supabase
-            .from("usuarios")
-            .update({ auth_user_id: au.user.id })
-            .eq("id", byEmail.data.id);
-
+          // Solo usamos el registro para lectura (resolver contexto), nunca para escribir auth_user_id aquí.
           me = byEmail as any;
         }
       }
