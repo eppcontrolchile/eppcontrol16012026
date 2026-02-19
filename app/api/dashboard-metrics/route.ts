@@ -52,6 +52,52 @@ function getImpersonatedEmpresaId(cookieStore: Awaited<ReturnType<typeof cookies
 }
 
 // Construye un ISO UTC para el inicio del día (00:00) en una zona horaria.
+// Importante: esto NO es "00:00Z"; es el instante UTC equivalente a 00:00 local en `tz`.
+function tzPartsAt(date: Date, tz: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+  return {
+    y: Number(get("year")),
+    m: Number(get("month")),
+    d: Number(get("day")),
+    hh: Number(get("hour")),
+    mm: Number(get("minute")),
+    ss: Number(get("second")),
+  };
+}
+
+// Offset (minutos) de la zona `tz` para un instante dado.
+// Convención: local = utc + offset.
+function tzOffsetMinutes(date: Date, tz: string) {
+  const p = tzPartsAt(date, tz);
+  const asUTC = Date.UTC(p.y, p.m - 1, p.d, p.hh, p.mm, p.ss);
+  return Math.round((asUTC - date.getTime()) / 60000);
+}
+
+// Convierte una fecha/hora *local* (en tz) a ISO UTC.
+function zonedTimeToUtcISO(tz: string, y: number, m: number, d: number, hh = 0, mm = 0, ss = 0) {
+  // Primera aproximación (tratando la hora local como si fuese UTC)
+  let utcMs = Date.UTC(y, m - 1, d, hh, mm, ss);
+
+  // Refinar 2 veces para absorber cambios de offset (DST / reglas TZ)
+  for (let i = 0; i < 2; i++) {
+    const off = tzOffsetMinutes(new Date(utcMs), tz);
+    utcMs = Date.UTC(y, m - 1, d, hh, mm, ss) - off * 60_000;
+  }
+
+  return new Date(utcMs).toISOString();
+}
+
 function startOfTodayISO(tz: string) {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -66,7 +112,7 @@ function startOfTodayISO(tz: string) {
   const m = Number(get("month"));
   const d = Number(get("day"));
 
-  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0)).toISOString();
+  return zonedTimeToUtcISO(tz, y, m, d, 0, 0, 0);
 }
 
 // ISO UTC para el inicio del mes (día 1 00:00) en una zona horaria.
@@ -82,7 +128,7 @@ function startOfMonthISO(tz: string) {
   const y = Number(get("year"));
   const m = Number(get("month"));
 
-  return new Date(Date.UTC(y, m - 1, 1, 0, 0, 0)).toISOString();
+  return zonedTimeToUtcISO(tz, y, m, 1, 0, 0, 0);
 }
 
 
@@ -159,6 +205,7 @@ export async function GET() {
         .from("usuarios")
         .select("id, empresa_id, activo, auth_user_id, rol")
         .eq("email", authEmail)
+        .eq("activo", true)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -173,7 +220,8 @@ export async function GET() {
           await supabaseAdmin
             .from("usuarios")
             .update({ auth_user_id: authUserId })
-            .eq("id", byEmail.data.id);
+            .eq("id", byEmail.data.id)
+            .is("auth_user_id", null);
         }
       }
     }
