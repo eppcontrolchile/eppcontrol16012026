@@ -152,11 +152,24 @@ export default function StockPage() {
   // UI stock crítico
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<number>(0);
-  const [ordenCampo, setOrdenCampo] = useState<keyof StockItem | null>(null);
-  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
+  // Orden independiente por tabla
+  type SortDir = "asc" | "desc";
+  type GlobalSortKey = "categoria" | "nombre" | "talla" | "stock" | "stockCritico";
+  type CentroSortKey = "centro_nombre" | "categoria" | "nombre" | "talla" | "stock" | "stockCritico";
+  type TotalSortKey = "categoria" | "nombre" | "talla" | "stock" | "stockCritico";
 
-  // Filtro global
+  const [ordenGlobalCampo, setOrdenGlobalCampo] = useState<GlobalSortKey>("categoria");
+  const [ordenGlobalDir, setOrdenGlobalDir] = useState<SortDir>("asc");
+
+  const [ordenCentroCampo, setOrdenCentroCampo] = useState<CentroSortKey>("centro_nombre");
+  const [ordenCentroDir, setOrdenCentroDir] = useState<SortDir>("asc");
+
+  const [ordenTotalCampo, setOrdenTotalCampo] = useState<TotalSortKey>("categoria");
+  const [ordenTotalDir, setOrdenTotalDir] = useState<SortDir>("asc");
+  // Filtro único para las 3 tablas
   const [filtro, setFiltro] = useState<string>("");
+
+
 
   // UI Transfer
   const [transferOpen, setTransferOpen] = useState(false);
@@ -406,32 +419,54 @@ export default function StockPage() {
     };
   };
 
-  const handleOrden = (campo: keyof StockItem) => {
-    if (ordenCampo === campo) {
-      setOrdenDireccion((prev) => (prev === "asc" ? "desc" : "asc"));
+  function sortArrow(activeKey: string, activeDir: SortDir, col: string) {
+    if (activeKey !== col) return "";
+    return activeDir === "asc" ? "▲" : "▼";
+  }
+
+  function sortByKey<T extends Record<string, any>>(rows: T[], key: string, dir: SortDir): T[] {
+    const m = dir === "asc" ? 1 : -1;
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const av = (a as any)[key];
+      const bv = (b as any)[key];
+
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * m;
+
+      const as = String(av ?? "").toLocaleLowerCase();
+      const bs = String(bv ?? "").toLocaleLowerCase();
+      return as.localeCompare(bs, "es", { sensitivity: "base" }) * m;
+    });
+    return arr;
+  }
+
+  const handleOrdenGlobal = (campo: GlobalSortKey) => {
+    if (ordenGlobalCampo === campo) {
+      setOrdenGlobalDir((p) => (p === "asc" ? "desc" : "asc"));
     } else {
-      setOrdenCampo(campo);
-      setOrdenDireccion("asc");
+      setOrdenGlobalCampo(campo);
+      setOrdenGlobalDir("asc");
     }
   };
 
-  const itemsOrdenados = useMemo(() => {
-    const arr = [...items];
-    arr.sort((a, b) => {
-      if (!ordenCampo) return 0;
-      const aVal: any = (a as any)[ordenCampo];
-      const bVal: any = (b as any)[ordenCampo];
+  const handleOrdenCentro = (campo: CentroSortKey) => {
+    if (ordenCentroCampo === campo) {
+      setOrdenCentroDir((p) => (p === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenCentroCampo(campo);
+      setOrdenCentroDir("asc");
+    }
+  };
 
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
-      }
+  const handleOrdenTotal = (campo: TotalSortKey) => {
+    if (ordenTotalCampo === campo) {
+      setOrdenTotalDir((p) => (p === "asc" ? "desc" : "asc"));
+    } else {
+      setOrdenTotalCampo(campo);
+      setOrdenTotalDir("asc");
+    }
+  };
 
-      return ordenDireccion === "asc"
-        ? String(aVal ?? "").localeCompare(String(bVal ?? ""))
-        : String(bVal ?? "").localeCompare(String(aVal ?? ""));
-    });
-    return arr;
-  }, [items, ordenCampo, ordenDireccion]);
 
   const totalEmpresaRows = useMemo(() => {
     const rows = buildTotalEmpresaRows(globalRows, centroRows);
@@ -444,32 +479,12 @@ export default function StockPage() {
     return rows;
   }, [globalRows, centroRows]);
 
-  const totalEmpresaOrdenados = useMemo(() => {
-    const arr = [...totalEmpresaRows];
-    arr.sort((a, b) => {
-      if (!ordenCampo) return 0;
-      const aVal: any = (a as any)[ordenCampo];
-      const bVal: any = (b as any)[ordenCampo];
-
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
-      }
-
-      return ordenDireccion === "asc"
-        ? String(aVal ?? "").localeCompare(String(bVal ?? ""))
-        : String(bVal ?? "").localeCompare(String(aVal ?? ""));
-    });
-    return arr;
-  }, [totalEmpresaRows, ordenCampo, ordenDireccion]);
-
-  // Filtro global
+  // Filtro único aplicado a las 3 tablas
   const textoFiltro = filtro.trim().toLowerCase();
 
   const matchFiltro = (values: (string | null | number)[]) => {
     if (!textoFiltro) return true;
-    return values.some((v) =>
-      String(v ?? "").toLowerCase().includes(textoFiltro)
-    );
+    return values.some((v) => String(v ?? "").toLowerCase().includes(textoFiltro));
   };
 
   const globalFiltrados = useMemo(() => {
@@ -480,22 +495,24 @@ export default function StockPage() {
 
   const centroFiltrados = useMemo(() => {
     return centroRows.filter((r) =>
-      matchFiltro([
-        r.centro_nombre,
-        r.categoria,
-        r.nombre,
-        r.talla,
-        r.marca,
-        r.modelo,
-      ])
+      matchFiltro([r.centro_nombre, r.categoria, r.nombre, r.talla, r.marca, r.modelo])
     );
   }, [centroRows, textoFiltro]);
 
+  const globalOrdenados = useMemo(() => {
+    return sortByKey(globalFiltrados, ordenGlobalCampo, ordenGlobalDir);
+  }, [globalFiltrados, ordenGlobalCampo, ordenGlobalDir]);
+
+  const centroOrdenados = useMemo(() => {
+    return sortByKey(centroFiltrados, ordenCentroCampo, ordenCentroDir);
+  }, [centroFiltrados, ordenCentroCampo, ordenCentroDir]);
+
   const totalEmpresaFiltrados = useMemo(() => {
-    return totalEmpresaOrdenados.filter((r) =>
+    const filtered = totalEmpresaRows.filter((r) =>
       matchFiltro([r.categoria, r.nombre, r.talla, r.marca, r.modelo])
     );
-  }, [totalEmpresaOrdenados, textoFiltro]);
+    return sortByKey(filtered, ordenTotalCampo, ordenTotalDir);
+  }, [totalEmpresaRows, textoFiltro, ordenTotalCampo, ordenTotalDir]);
 
   const openTransfer = (p: {
     from: string | null;
@@ -784,7 +801,7 @@ export default function StockPage() {
           )}
         </div>
 
-        {globalFiltrados.length === 0 ? (
+        {globalOrdenados.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-zinc-500">
             Sin stock en Inventario Bodega Empresa.
           </div>
@@ -793,27 +810,27 @@ export default function StockPage() {
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-left">
                 <tr>
-                  <th onClick={() => handleOrden("categoria")} className="px-4 py-3 cursor-pointer">
-                    Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenGlobal("categoria")} className="px-4 py-3 cursor-pointer">
+                    Categoría {sortArrow(ordenGlobalCampo, ordenGlobalDir, "categoria")}
                   </th>
-                  <th onClick={() => handleOrden("nombre")} className="px-4 py-3 cursor-pointer">
-                    EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenGlobal("nombre")} className="px-4 py-3 cursor-pointer">
+                    EPP {sortArrow(ordenGlobalCampo, ordenGlobalDir, "nombre")}
                   </th>
-                  <th onClick={() => handleOrden("talla")} className="px-4 py-3 cursor-pointer">
-                    Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenGlobal("talla")} className="px-4 py-3 cursor-pointer">
+                    Talla {sortArrow(ordenGlobalCampo, ordenGlobalDir, "talla")}
                   </th>
-                  <th onClick={() => handleOrden("stock")} className="px-4 py-3 cursor-pointer">
-                    Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenGlobal("stock")} className="px-4 py-3 cursor-pointer">
+                    Stock {sortArrow(ordenGlobalCampo, ordenGlobalDir, "stock")}
                   </th>
-                  <th onClick={() => handleOrden("stockCritico")} className="px-4 py-3 cursor-pointer">
-                    Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenGlobal("stockCritico")} className="px-4 py-3 cursor-pointer">
+                    Stock crítico {sortArrow(ordenGlobalCampo, ordenGlobalDir, "stockCritico")}
                   </th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {globalFiltrados.map((row, idx) => {
+                {globalOrdenados.map((row, idx) => {
                   const estado = getEstado(row.stock, row.stockCritico);
                   return (
                     <tr key={`${row.categoria}-${row.nombre}-${row.talla ?? ""}-${idx}`} className="border-t">
@@ -857,7 +874,7 @@ export default function StockPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Stock por centro de trabajo</h2>
 
-        {centroFiltrados.length === 0 ? (
+        {centroOrdenados.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-zinc-500">
             Sin stock asignado a centros.
           </div>
@@ -866,28 +883,30 @@ export default function StockPage() {
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-left">
                 <tr>
-                  <th className="px-4 py-3">Centro</th>
-                  <th onClick={() => handleOrden("categoria")} className="px-4 py-3 cursor-pointer">
-                    Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenCentro("centro_nombre")} className="px-4 py-3 cursor-pointer">
+                    Centro {sortArrow(ordenCentroCampo, ordenCentroDir, "centro_nombre")}
                   </th>
-                  <th onClick={() => handleOrden("nombre")} className="px-4 py-3 cursor-pointer">
-                    EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenCentro("categoria")} className="px-4 py-3 cursor-pointer">
+                    Categoría {sortArrow(ordenCentroCampo, ordenCentroDir, "categoria")}
                   </th>
-                  <th onClick={() => handleOrden("talla")} className="px-4 py-3 cursor-pointer">
-                    Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenCentro("nombre")} className="px-4 py-3 cursor-pointer">
+                    EPP {sortArrow(ordenCentroCampo, ordenCentroDir, "nombre")}
                   </th>
-                  <th onClick={() => handleOrden("stock")} className="px-4 py-3 cursor-pointer">
-                    Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenCentro("talla")} className="px-4 py-3 cursor-pointer">
+                    Talla {sortArrow(ordenCentroCampo, ordenCentroDir, "talla")}
                   </th>
-                  <th onClick={() => handleOrden("stockCritico")} className="px-4 py-3 cursor-pointer">
-                    Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenCentro("stock")} className="px-4 py-3 cursor-pointer">
+                    Stock {sortArrow(ordenCentroCampo, ordenCentroDir, "stock")}
+                  </th>
+                  <th onClick={() => handleOrdenCentro("stockCritico")} className="px-4 py-3 cursor-pointer">
+                    Stock crítico {sortArrow(ordenCentroCampo, ordenCentroDir, "stockCritico")}
                   </th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {centroFiltrados.map((row, idx) => {
+                {centroOrdenados.map((row, idx) => {
                   const estado = getEstado(row.stock, row.stockCritico);
                   return (
                     <tr key={`${row.centro_id}-${row.categoria}-${row.nombre}-${row.talla ?? ""}-${idx}`} className="border-t">
@@ -944,20 +963,20 @@ export default function StockPage() {
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-left">
                 <tr>
-                  <th onClick={() => handleOrden("categoria")} className="px-4 py-3 cursor-pointer">
-                    Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenTotal("categoria")} className="px-4 py-3 cursor-pointer">
+                    Categoría {sortArrow(ordenTotalCampo, ordenTotalDir, "categoria")}
                   </th>
-                  <th onClick={() => handleOrden("nombre")} className="px-4 py-3 cursor-pointer">
-                    EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenTotal("nombre")} className="px-4 py-3 cursor-pointer">
+                    EPP {sortArrow(ordenTotalCampo, ordenTotalDir, "nombre")}
                   </th>
-                  <th onClick={() => handleOrden("talla")} className="px-4 py-3 cursor-pointer">
-                    Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenTotal("talla")} className="px-4 py-3 cursor-pointer">
+                    Talla {sortArrow(ordenTotalCampo, ordenTotalDir, "talla")}
                   </th>
-                  <th onClick={() => handleOrden("stock")} className="px-4 py-3 cursor-pointer">
-                    Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenTotal("stock")} className="px-4 py-3 cursor-pointer">
+                    Stock {sortArrow(ordenTotalCampo, ordenTotalDir, "stock")}
                   </th>
-                  <th onClick={() => handleOrden("stockCritico")} className="px-4 py-3 cursor-pointer">
-                    Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  <th onClick={() => handleOrdenTotal("stockCritico")} className="px-4 py-3 cursor-pointer">
+                    Stock crítico {sortArrow(ordenTotalCampo, ordenTotalDir, "stockCritico")}
                   </th>
                   <th className="px-4 py-3">Estado</th>
                 </tr>

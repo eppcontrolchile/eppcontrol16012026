@@ -204,8 +204,16 @@ export default function UsuariosPage() {
           { id: "x", nombre: "gerencia" },
         ];
 
-    return base.filter((r) => String(r.nombre || "").trim().toLowerCase() !== "superadmin");
-  }, [roles]);
+    const my = String(miRol ?? "").trim().toLowerCase();
+
+    return base.filter((r) => {
+      const rn = String(r.nombre || "").trim().toLowerCase();
+      if (rn === "superadmin") return false;
+      // Si el creador es admin (no superadmin), no puede crear/promover a admin desde el dashboard
+      if (my === "admin" && rn === "admin") return false;
+      return true;
+    });
+  }, [roles, miRol]);
 
   async function loadAll() {
     setLoading(true);

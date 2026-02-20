@@ -113,6 +113,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, reason: "forbidden" }, { status: 403 });
     }
 
+    // Regla negocio: un admin NO puede crear otros admins (solo superadmin puede)
+    if (!isSuperadmin && rol === "admin") {
+      return NextResponse.json({ ok: false, reason: "cannot-create-admin" }, { status: 403 });
+    }
+
     // Gating plan advanced (password y roles avanzados)
     const { data: emp } = await supabase
       .from("empresas")
