@@ -31,7 +31,7 @@ type StockOutRow = {
   stock_critico: number;
 };
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     if (
       !process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -40,6 +40,10 @@ export async function GET(_req: NextRequest) {
     ) {
       return NextResponse.json({ error: "Missing server env vars" }, { status: 500 });
     }
+
+    // Parse query param: scope
+    const scope = String(req.nextUrl?.searchParams?.get("scope") ?? "").trim().toLowerCase();
+    const scopeIsCentros = scope === "centros";
 
     // 1) Auth por cookie session
     const cookieStore = await cookies();
@@ -107,15 +111,136 @@ export async function GET(_req: NextRequest) {
     // 3) A partir de aquí, SIEMPRE scopiado por empresaId
 
     // 3.1) Lotes NO anulados y disponibles > 0
-    const { data: lots, error: lotsErr } = await admin
-      .from("lotes_epp")
-      .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible")
-      .eq("empresa_id", empresaId)
-      .eq("anulado", false)
-      .gt("cantidad_disponible", 0);
+    // - scope default: SOLO Inventario Empresa (global)
+    // - scope=centros: SOLO stock asignado a centros (centro)
 
-    if (lotsErr) {
-      return NextResponse.json({ error: lotsErr.message }, { status: 500 });
+    let lots: any[] | null = null;
+    if (scopeIsCentros) {
+      const { data: lotsCentro, error: lotsCentroErr } = await admin
+        .from("lotes_epp")
+        .select(
+          "categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id,centros_trabajo:centro_id(nombre)"
+        )
+        .eq("empresa_id", empresaId)
+        .eq("anulado", false)
+        .gt("cantidad_disponible", 0)
+        .eq("ubicacion_tipo", "centro")
+        .not("centro_id", "is", null);
+
+      if (lotsCentroErr) {
+        return NextResponse.json({ error: lotsCentroErr.message }, { status: 500 });
+      }
+
+      // 4) Agregación por centro + producto
+      const aggCentro = new Map<
+        string,
+        {
+          centro_id: string;
+          centro_nombre: string | null;
+          categoria: string;
+          nombre: string;
+          marca: string | null;
+          modelo: string | null;
+          talla: string | null;
+          stock_total: number;
+        }
+      >();
+
+      for (const r of lotsCentro ?? []) {
+        const centroId = String((r as any).centro_id ?? "").trim();
+        if (!centroId) continue;
+
+        const centroNombreRaw = (r as any).centros_trabajo?.nombre;
+        const centroNombre =
+          centroNombreRaw == null || String(centroNombreRaw).trim() === ""
+            ? null
+            : String(centroNombreRaw).trim();
+
+        const categoria = String((r as any).categoria ?? "");
+        const nombre = String((r as any).nombre_epp ?? "");
+
+        const tallaRaw = (r as any).talla;
+        const talla =
+          tallaRaw == null || String(tallaRaw).trim() === "" ? null : String(tallaRaw);
+
+        const marcaRaw = (r as any).marca;
+        const modeloRaw = (r as any).modelo;
+
+        const marca =
+          marcaRaw == null || String(marcaRaw).trim() === "" ? null : String(marcaRaw).trim();
+        const modelo =
+          modeloRaw == null || String(modeloRaw).trim() === "" ? null : String(modeloRaw).trim();
+
+        const qty = Number((r as any).cantidad_disponible ?? 0);
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+
+        const key = `${centroId}||${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
+        const prev = aggCentro.get(key);
+        if (!prev) {
+          aggCentro.set(key, {
+            centro_id: centroId,
+            centro_nombre: centroNombre,
+            categoria,
+            nombre,
+            marca,
+            modelo,
+            talla,
+            stock_total: qty,
+          });
+        } else {
+          prev.stock_total += qty;
+        }
+      }
+
+      const outCentro = Array.from(aggCentro.values()).map((x) => {
+        const critKey = `${x.categoria}||${x.nombre}||${x.talla ?? ""}`;
+        const stockCritico = critMap.get(critKey) ?? 0;
+        const tallaForId = x.talla ?? "";
+        const variantKey = `${x.categoria}|${x.nombre}|${x.marca ?? ""}|${x.modelo ?? ""}|${tallaForId}`;
+
+        return {
+          id: `${empresaId}|${x.centro_id}|${x.categoria}|${x.nombre}|${tallaForId}`,
+          variant_key: variantKey,
+          centro_id: x.centro_id,
+          centro_nombre: x.centro_nombre,
+          categoria: x.categoria,
+          nombre: x.nombre,
+          marca: x.marca ?? null,
+          modelo: x.modelo ?? null,
+          talla: x.talla,
+          stock_total: x.stock_total,
+          stock_critico: stockCritico,
+        };
+      });
+
+      outCentro.sort(
+        (a: any, b: any) =>
+          String(a.centro_nombre ?? "").localeCompare(String(b.centro_nombre ?? "")) ||
+          a.categoria.localeCompare(b.categoria) ||
+          a.nombre.localeCompare(b.nombre) ||
+          String(a.talla ?? "").localeCompare(String(b.talla ?? ""))
+      );
+
+      const res = NextResponse.json(outCentro);
+      res.headers.set("Cache-Control", "no-store");
+      return res;
+    }
+
+    // Default: Inventario Empresa (global)
+    {
+      const { data: lotsData, error: lotsErr } = await admin
+        .from("lotes_epp")
+        .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible")
+        .eq("empresa_id", empresaId)
+        .eq("anulado", false)
+        .gt("cantidad_disponible", 0)
+        .eq("ubicacion_tipo", "global")
+        .is("centro_id", null);
+
+      if (lotsErr) {
+        return NextResponse.json({ error: lotsErr.message }, { status: 500 });
+      }
+      lots = lotsData;
     }
 
     // 3.2) Stock críticos por empresa

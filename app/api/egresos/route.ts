@@ -14,6 +14,35 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+
+function isUuid(v: unknown) {
+  const s = String(v ?? "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function decodeBase64UrlJson(v: string): any | null {
+  try {
+    const json = Buffer.from(String(v || ""), "base64url").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function getImpersonatedEmpresaId(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  const compat = cookieStore.get("impersonate_empresa_id")?.value;
+  if (compat && isUuid(compat)) return compat;
+
+  const packed = cookieStore.get("epp_impersonate")?.value;
+  if (packed) {
+    const obj = decodeBase64UrlJson(packed);
+    const eid = obj?.empresa_id;
+    if (eid && isUuid(eid)) return String(eid);
+  }
+
+  return null;
+}
+
 function isAllowedRemoteAssetUrl(input: string, supabaseUrl: string): boolean {
   try {
     const u = new URL(input);
@@ -126,7 +155,7 @@ export async function POST(req: NextRequest) {
 
     const { data: usuarioRow, error: usuarioErr } = await supabase
       .from("usuarios")
-      .select("id, empresa_id, rol, activo, email")
+      .select("id, empresa_id, rol, activo, email, centro_id")
       .eq("auth_user_id", user.id)
       .maybeSingle();
 
@@ -142,16 +171,45 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Usuario bloqueado" }, { status: 403 });
     }
 
-    // En egresos, exigimos rol admin (por impacto en stock)
+    // En egresos, permitimos roles operativos con impacto en stock
     const rol = String(usuarioRow.rol ?? "").toLowerCase();
-    if (rol !== "admin") {
+    const canEgreso =
+      rol === "admin" ||
+      rol === "bodega" ||
+      rol === "jefe_area" ||
+      rol === "supervisor_terreno" ||
+      rol === "superadmin";
+
+    if (!canEgreso) {
       return NextResponse.json({ error: "Permisos insuficientes" }, { status: 403 });
     }
 
-    const empresa_id = String(usuarioRow.empresa_id);
+    // Empresa efectiva (soporte/impersonación): si soy superadmin y hay cookie, uso esa empresa
+    const impersonEmpresa = getImpersonatedEmpresaId(cookieStore);
+    const empresa_id = (rol === "superadmin" && impersonEmpresa)
+      ? impersonEmpresa
+      : String(usuarioRow.empresa_id);
+
     const usuario_id = String(usuarioRow.id);
 
     const { trabajador_id, centro_id, firma_url, items } = body;
+
+    // Determinar fuente real de descuento según rol
+    let fromCentroId: string | null = null;
+
+    if (rol === "supervisor_terreno") {
+      if (!usuarioRow.centro_id) {
+        return NextResponse.json(
+          { error: "Supervisor sin centro asignado" },
+          { status: 403 }
+        );
+      }
+
+      fromCentroId = String(usuarioRow.centro_id);
+    } else {
+      // Todos los demás descuentan desde Inventario Empresa (global)
+      fromCentroId = null;
+    }
 
     // ─────────────────────────────────────────────
     // 1️⃣ Validaciones mínimas
@@ -214,6 +272,7 @@ export async function POST(req: NextRequest) {
         p_firma_url: firma_url,
         p_items: items,
         p_idempotency_key: idempotencyKey,
+        p_from_centro_id: fromCentroId,
       }
     );
 

@@ -56,11 +56,11 @@ function roleDescription(role: string | null | undefined) {
   const r = String(role ?? "").trim().toLowerCase();
   switch (r) {
     case "admin":
-      return "Opera todo: costos, usuarios, configuración y administración completa.";
+      return "Opera todo: costos, usuarios, stock (incluye movimientos), configuración y administración completa.";
     case "jefe_area":
       return "Entrega, ve costos y stock; crea trabajadores y centros de trabajo.";
     case "bodega":
-      return "Entrega, ingresa EPP y ve stock.";
+      return "Entrega, ingresa EPP, ve y mueve stock.";
     case "solo_entrega":
       return "Solo realiza entregas (ideal para celular).";
     case "supervisor_terreno":
@@ -545,13 +545,13 @@ export default function UsuariosPage() {
         <p className="font-medium">¿Qué puede hacer cada rol?</p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-zinc-600">
           <li>
-            <b>admin</b>: opera todo, ve costos, define usuarios, administra todo.
+            <b>admin</b>: opera todo, ve costos, ve y mueve stock, define usuarios, administra todo.
           </li>
           <li>
             <b>jefe de área</b>: entrega, ve costos, ve stock, crea trabajadores, crea centros de trabajo.
           </li>
           <li>
-            <b>bodega</b>: entrega, ingresa EPP, ve stock.
+            <b>bodega</b>: entrega, ingresa EPP, ve y mueve stock.
           </li>
           <li>
             <b>solo entrega</b>: solo entrega (ideal móvil / celular).
