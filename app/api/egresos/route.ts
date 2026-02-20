@@ -194,6 +194,9 @@ export async function POST(req: NextRequest) {
 
     const { trabajador_id, centro_id, firma_url, items } = body;
 
+    const trabajadorId = String(trabajador_id ?? "").trim();
+    const centroOperativoId = String(centro_id ?? "").trim();
+
     // Determinar fuente real de descuento según rol
     let fromCentroId: string | null = null;
 
@@ -211,14 +214,51 @@ export async function POST(req: NextRequest) {
       fromCentroId = null;
     }
 
+    // Supervisor terreno: solo puede operar (ver/entregar) dentro de su propio Centro de Trabajo
+    if (rol === "supervisor_terreno") {
+      const supervisorCentroId = String(usuarioRow.centro_id ?? "").trim();
+
+      // El centro operativo de la entrega debe ser su mismo CT
+      if (!supervisorCentroId || centroOperativoId !== supervisorCentroId) {
+        return NextResponse.json(
+          { error: "Supervisor solo puede operar en su Centro de Trabajo" },
+          { status: 403 }
+        );
+      }
+
+      // El trabajador debe pertenecer a ese mismo CT (trazabilidad y control)
+      const { data: trabRow, error: trabErr } = await supabase
+        .from("trabajadores")
+        .select("id, centro_id")
+        .eq("empresa_id", empresa_id)
+        .eq("id", trabajadorId)
+        .maybeSingle();
+
+      if (trabErr) {
+        return NextResponse.json({ error: trabErr.message }, { status: 500 });
+      }
+
+      if (!trabRow?.id) {
+        return NextResponse.json({ error: "Trabajador no encontrado" }, { status: 404 });
+      }
+
+      const trabajadorCentroId = String((trabRow as any).centro_id ?? "").trim();
+      if (!trabajadorCentroId || trabajadorCentroId !== supervisorCentroId) {
+        return NextResponse.json(
+          { error: "Trabajador fuera del Centro del supervisor" },
+          { status: 403 }
+        );
+      }
+    }
+
     // ─────────────────────────────────────────────
     // 1️⃣ Validaciones mínimas
     // ─────────────────────────────────────────────
     if (
       !empresa_id ||
       !usuario_id ||
-      !trabajador_id ||
-      !centro_id ||
+      !trabajadorId ||
+      !centroOperativoId ||
       !Array.isArray(items) ||
       items.length === 0
     ) {
@@ -267,8 +307,8 @@ export async function POST(req: NextRequest) {
       {
         p_empresa_id: empresa_id,
         p_usuario_id: usuario_id,
-        p_trabajador_id: trabajador_id,
-        p_centro_id: centro_id,
+        p_trabajador_id: trabajadorId,
+        p_centro_id: centroOperativoId,
         p_firma_url: firma_url,
         p_items: items,
         p_idempotency_key: idempotencyKey,

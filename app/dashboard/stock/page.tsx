@@ -76,6 +76,67 @@ function keyProducto(categoria: string, nombre: string, talla: string | null) {
   return `${categoria}||${nombre}||${talla ?? ""}`;
 }
 
+function keyVariante(
+  categoria: string,
+  nombre: string,
+  talla: string | null,
+  marca: string | null,
+  modelo: string | null
+) {
+  return `${categoria}||${nombre}||${talla ?? ""}||${marca ?? ""}||${modelo ?? ""}`;
+}
+
+function buildTotalEmpresaRows(globalRows: StockCentroRow[], centroRows: StockCentroRow[]): StockItem[] {
+  const agg = new Map<
+    string,
+    {
+      categoria: string;
+      nombre: string;
+      talla: string | null;
+      marca: string | null;
+      modelo: string | null;
+      stock: number;
+      stockCritico: number;
+      idLegacy: string | null;
+    }
+  >();
+
+  const add = (r: StockCentroRow) => {
+    const k = keyVariante(r.categoria, r.nombre, r.talla, r.marca, r.modelo);
+    const prev = agg.get(k);
+    if (!prev) {
+      agg.set(k, {
+        categoria: r.categoria,
+        nombre: r.nombre,
+        talla: r.talla,
+        marca: r.marca,
+        modelo: r.modelo,
+        stock: r.stock,
+        stockCritico: r.stockCritico,
+        idLegacy: r.idLegacy,
+      });
+    } else {
+      prev.stock += r.stock;
+      // stockCritico debe ser el mismo por producto+talla; mantenemos el primero
+      if (!prev.idLegacy && r.idLegacy) prev.idLegacy = r.idLegacy;
+    }
+  };
+
+  (globalRows ?? []).forEach(add);
+  (centroRows ?? []).forEach(add);
+
+  return Array.from(agg.values()).map((x) => ({
+    id: x.idLegacy ?? `__noid__|${x.categoria}|${x.nombre}|${x.talla ?? ""}`,
+    categoria: x.categoria,
+    nombre: x.nombre,
+    talla: x.talla,
+    marca: x.marca,
+    modelo: x.modelo,
+    stock: x.stock,
+    stockCritico: x.stockCritico,
+  }));
+}
+
 export default function StockPage() {
   // Stock “Total Empresa” (agregado, viene desde backend /api/stock)
   const [items, setItems] = useState<StockItem[]>([]);
@@ -93,6 +154,9 @@ export default function StockPage() {
   const [editValue, setEditValue] = useState<number>(0);
   const [ordenCampo, setOrdenCampo] = useState<keyof StockItem | null>(null);
   const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
+
+  // Filtro global
+  const [filtro, setFiltro] = useState<string>("");
 
   // UI Transfer
   const [transferOpen, setTransferOpen] = useState(false);
@@ -369,6 +433,70 @@ export default function StockPage() {
     return arr;
   }, [items, ordenCampo, ordenDireccion]);
 
+  const totalEmpresaRows = useMemo(() => {
+    const rows = buildTotalEmpresaRows(globalRows, centroRows);
+    rows.sort(
+      (a, b) =>
+        a.categoria.localeCompare(b.categoria) ||
+        a.nombre.localeCompare(b.nombre) ||
+        String(a.talla ?? "").localeCompare(String(b.talla ?? ""))
+    );
+    return rows;
+  }, [globalRows, centroRows]);
+
+  const totalEmpresaOrdenados = useMemo(() => {
+    const arr = [...totalEmpresaRows];
+    arr.sort((a, b) => {
+      if (!ordenCampo) return 0;
+      const aVal: any = (a as any)[ordenCampo];
+      const bVal: any = (b as any)[ordenCampo];
+
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        return ordenDireccion === "asc" ? aVal - bVal : bVal - aVal;
+      }
+
+      return ordenDireccion === "asc"
+        ? String(aVal ?? "").localeCompare(String(bVal ?? ""))
+        : String(bVal ?? "").localeCompare(String(aVal ?? ""));
+    });
+    return arr;
+  }, [totalEmpresaRows, ordenCampo, ordenDireccion]);
+
+  // Filtro global
+  const textoFiltro = filtro.trim().toLowerCase();
+
+  const matchFiltro = (values: (string | null | number)[]) => {
+    if (!textoFiltro) return true;
+    return values.some((v) =>
+      String(v ?? "").toLowerCase().includes(textoFiltro)
+    );
+  };
+
+  const globalFiltrados = useMemo(() => {
+    return globalRows.filter((r) =>
+      matchFiltro([r.categoria, r.nombre, r.talla, r.marca, r.modelo])
+    );
+  }, [globalRows, textoFiltro]);
+
+  const centroFiltrados = useMemo(() => {
+    return centroRows.filter((r) =>
+      matchFiltro([
+        r.centro_nombre,
+        r.categoria,
+        r.nombre,
+        r.talla,
+        r.marca,
+        r.modelo,
+      ])
+    );
+  }, [centroRows, textoFiltro]);
+
+  const totalEmpresaFiltrados = useMemo(() => {
+    return totalEmpresaOrdenados.filter((r) =>
+      matchFiltro([r.categoria, r.nombre, r.talla, r.marca, r.modelo])
+    );
+  }, [totalEmpresaOrdenados, textoFiltro]);
+
   const openTransfer = (p: {
     from: string | null;
     to: string | null;
@@ -450,6 +578,15 @@ export default function StockPage() {
           <p className="text-sm text-zinc-500">
             Inventario Empresa (global) y stock asignado por centro de trabajo.
           </p>
+          <div className="mt-3">
+            <input
+              type="text"
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+              placeholder="Filtrar por categoría, EPP, talla o marca..."
+              className="w-full max-w-md rounded border px-3 py-2 text-sm"
+            />
+          </div>
         </div>
         <button
           className="rounded border px-3 py-2 text-sm hover:bg-zinc-50"
@@ -641,32 +778,42 @@ export default function StockPage() {
       {/* Inventario Empresa (global) */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Inventario Empresa</h2>
+          <h2 className="text-lg font-semibold">Inventario Bodega Empresa</h2>
           {transferOk && (
             <span className="text-sm text-green-700">{transferOk}</span>
           )}
         </div>
 
-        {globalRows.length === 0 ? (
+        {globalFiltrados.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-zinc-500">
-            Sin stock en Inventario Empresa.
+            Sin stock en Inventario Bodega Empresa.
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-left">
                 <tr>
-                  <th className="px-4 py-3">Categoría</th>
-                  <th className="px-4 py-3">EPP</th>
-                  <th className="px-4 py-3">Talla</th>
-                  <th className="px-4 py-3">Stock</th>
-                  <th className="px-4 py-3">Stock crítico</th>
+                  <th onClick={() => handleOrden("categoria")} className="px-4 py-3 cursor-pointer">
+                    Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("nombre")} className="px-4 py-3 cursor-pointer">
+                    EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("talla")} className="px-4 py-3 cursor-pointer">
+                    Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("stock")} className="px-4 py-3 cursor-pointer">
+                    Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("stockCritico")} className="px-4 py-3 cursor-pointer">
+                    Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {globalRows.map((row, idx) => {
+                {globalFiltrados.map((row, idx) => {
                   const estado = getEstado(row.stock, row.stockCritico);
                   return (
                     <tr key={`${row.categoria}-${row.nombre}-${row.talla ?? ""}-${idx}`} className="border-t">
@@ -710,7 +857,7 @@ export default function StockPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Stock por centro de trabajo</h2>
 
-        {centroRows.length === 0 ? (
+        {centroFiltrados.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-zinc-500">
             Sin stock asignado a centros.
           </div>
@@ -720,17 +867,27 @@ export default function StockPage() {
               <thead className="bg-zinc-50 text-left">
                 <tr>
                   <th className="px-4 py-3">Centro</th>
-                  <th className="px-4 py-3">Categoría</th>
-                  <th className="px-4 py-3">EPP</th>
-                  <th className="px-4 py-3">Talla</th>
-                  <th className="px-4 py-3">Stock</th>
-                  <th className="px-4 py-3">Stock crítico</th>
+                  <th onClick={() => handleOrden("categoria")} className="px-4 py-3 cursor-pointer">
+                    Categoría {ordenCampo === "categoria" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("nombre")} className="px-4 py-3 cursor-pointer">
+                    EPP {ordenCampo === "nombre" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("talla")} className="px-4 py-3 cursor-pointer">
+                    Talla {ordenCampo === "talla" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("stock")} className="px-4 py-3 cursor-pointer">
+                    Stock {ordenCampo === "stock" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
+                  <th onClick={() => handleOrden("stockCritico")} className="px-4 py-3 cursor-pointer">
+                    Stock crítico {ordenCampo === "stockCritico" && (ordenDireccion === "asc" ? "▲" : "▼")}
+                  </th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {centroRows.map((row, idx) => {
+                {centroFiltrados.map((row, idx) => {
                   const estado = getEstado(row.stock, row.stockCritico);
                   return (
                     <tr key={`${row.centro_id}-${row.categoria}-${row.nombre}-${row.talla ?? ""}-${idx}`} className="border-t">
@@ -775,10 +932,10 @@ export default function StockPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Total Empresa (referencial)</h2>
         <p className="text-sm text-zinc-500">
-          Agregado de stock (global + centros). Mantiene el editor de stock crítico.
+          Agregado de stock (inventario bodega + centros). Mantiene el editor de stock crítico.
         </p>
 
-        {items.length === 0 ? (
+        {totalEmpresaFiltrados.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-zinc-500">
             Aún no tienes EPP registrados.
           </div>
@@ -806,7 +963,7 @@ export default function StockPage() {
                 </tr>
               </thead>
               <tbody>
-                {itemsOrdenados.map((item) => {
+                {totalEmpresaFiltrados.map((item) => {
                   const estado = getEstado(item.stock, item.stockCritico);
                   return (
                     <tr key={item.id} className="border-t">
@@ -865,7 +1022,9 @@ export default function StockPage() {
                           <div className="flex items-center space-x-2">
                             <span>{item.stockCritico}</span>
                             <button
-                              className="text-blue-600 text-sm font-semibold"
+                              className="text-blue-600 text-sm font-semibold disabled:opacity-40"
+                              disabled={String(item.id).startsWith("__noid__|")}
+                              title={String(item.id).startsWith("__noid__|") ? "No editable (id legacy no disponible)" : ""}
                               onClick={() => {
                                 setEditingId(item.id);
                                 setEditValue(item.stockCritico);

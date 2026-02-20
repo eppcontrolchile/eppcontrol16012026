@@ -91,6 +91,10 @@ export default function EgresoPage() {
 
   const [stock, setStock] = useState<StockRow[]>([]);
 
+  // Rol/centro del usuario logueado (para reglas de supervisor_terreno)
+  const [myRole, setMyRole] = useState<string>("");
+  const [myCentroId, setMyCentroId] = useState<string | null>(null);
+
   const [items, setItems] = useState<EgresoItemUI[]>([
     {
       categoria: "",
@@ -127,7 +131,7 @@ export default function EgresoPage() {
 
         const { data: usuario, error: usuarioError } = await supabaseBrowser()
           .from("usuarios")
-          .select("empresa_id")
+          .select("empresa_id, rol, centro_id")
           .eq("auth_user_id", authData.user.id)
           .maybeSingle();
 
@@ -137,13 +141,30 @@ export default function EgresoPage() {
           return;
         }
 
+        const rol = String((usuario as any)?.rol ?? "").trim().toLowerCase();
+        const myCentro = (usuario as any)?.centro_id ? String((usuario as any).centro_id) : null;
+        setMyRole(rol);
+        setMyCentroId(myCentro);
+
         // Trabajadores activos
-        const { data: trabs, error: trabErr } = await supabaseBrowser()
+        let trabQuery = supabaseBrowser()
           .from("trabajadores")
           .select("id,nombre,rut,activo,centro_id")
           .eq("empresa_id", usuario.empresa_id)
           .eq("activo", true)
           .order("nombre", { ascending: true });
+
+        // supervisor_terreno: solo trabajadores de su centro asignado
+        if (rol === "supervisor_terreno") {
+          if (!myCentro) {
+            setError("Supervisor sin centro asignado.");
+            setLoading(false);
+            return;
+          }
+          trabQuery = trabQuery.eq("centro_id", myCentro);
+        }
+
+        const { data: trabs, error: trabErr } = await trabQuery;
 
         if (trabErr) {
           setError(trabErr.message);
@@ -159,45 +180,94 @@ export default function EgresoPage() {
           centro_id: t.centro_id ?? null,
         })) ?? []);
 
-        // Stock (desde API server)
-        const stockResp = await fetch("/api/stock", { cache: "no-store" });
-        if (!stockResp.ok) {
-          setError("No se pudo cargar el stock.");
-          setLoading(false);
-          return;
+        // Stock
+        let mapped: StockRow[] = [];
+
+        if (rol === "supervisor_terreno") {
+          // supervisor_terreno: solo puede ver/entregar stock de su CT
+          if (!myCentro) {
+            setError("Supervisor sin centro asignado.");
+            setLoading(false);
+            return;
+          }
+
+          const { data: lotes, error: lotesErr } = await supabaseBrowser()
+            .from("lotes_epp")
+            .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id")
+            .eq("empresa_id", usuario.empresa_id)
+            .eq("anulado", false)
+            .eq("ubicacion_tipo", "centro")
+            .eq("centro_id", myCentro)
+            .gt("cantidad_disponible", 0);
+
+          if (lotesErr) {
+            setError(lotesErr.message);
+            setLoading(false);
+            return;
+          }
+
+          // Agregar por categoria/nombre/marca/modelo/talla
+          const agg = new Map<string, StockRow>();
+          for (const r of (lotes as any[]) ?? []) {
+            const categoria = String(r?.categoria ?? "");
+            const nombre = String(r?.nombre_epp ?? "");
+            const marca = r?.marca == null || String(r.marca).trim() === "" ? null : String(r.marca).trim();
+            const modelo = r?.modelo == null || String(r.modelo).trim() === "" ? null : String(r.modelo).trim();
+            const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla).trim();
+            const qty = Number(r?.cantidad_disponible ?? 0);
+            if (!Number.isFinite(qty) || qty <= 0) continue;
+
+            const key = `${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
+            const prev = agg.get(key);
+            if (!prev) {
+              agg.set(key, { categoria, nombre, marca, modelo, talla, stock: qty });
+            } else {
+              prev.stock += qty;
+            }
+          }
+
+          mapped = Array.from(agg.values());
+        } else {
+          // Otros roles: stock agregado desde API server (global + centros según implementación)
+          const stockResp = await fetch("/api/stock", { cache: "no-store" });
+          if (!stockResp.ok) {
+            setError("No se pudo cargar el stock.");
+            setLoading(false);
+            return;
+          }
+
+          const stockRaw = await stockResp.json().catch(() => []);
+          mapped = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => {
+            // Robust mapping: allow API to return marca/modelo with alternate field names
+            const marca =
+              r?.marca ??
+              r?.marca_epp ??
+              r?.epp_marca ??
+              r?.brand ??
+              r?.Brand ??
+              null;
+
+            const modelo =
+              r?.modelo ??
+              r?.modelo_epp ??
+              r?.epp_modelo ??
+              r?.model ??
+              r?.Model ??
+              null;
+
+            const nombreRaw = String(r?.nombre ?? r?.nombre_epp ?? r?.nombreEpp ?? "");
+            const parsed = splitNombreMarcaModelo(nombreRaw, marca, modelo);
+
+            return {
+              categoria: String(r?.categoria ?? ""),
+              nombre: parsed.nombre,
+              marca: parsed.marca,
+              modelo: parsed.modelo,
+              talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
+              stock: Number(r?.stock_total ?? r?.stock ?? 0),
+            };
+          });
         }
-
-        const stockRaw = await stockResp.json().catch(() => []);
-        const mapped: StockRow[] = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => {
-          // Robust mapping: allow API to return marca/modelo with alternate field names
-          const marca =
-            r?.marca ??
-            r?.marca_epp ??
-            r?.epp_marca ??
-            r?.brand ??
-            r?.Brand ??
-            null;
-
-          const modelo =
-            r?.modelo ??
-            r?.modelo_epp ??
-            r?.epp_modelo ??
-            r?.model ??
-            r?.Model ??
-            null;
-
-          const nombreRaw = String(r?.nombre ?? r?.nombre_epp ?? r?.nombreEpp ?? "");
-          const parsed = splitNombreMarcaModelo(nombreRaw, marca, modelo);
-
-          return {
-            categoria: String(r?.categoria ?? ""),
-            nombre: parsed.nombre,
-            marca: parsed.marca,
-            modelo: parsed.modelo,
-            talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
-            stock: Number(r?.stock_total ?? r?.stock ?? 0),
-          };
-        });
 
         // Solo lo disponible
         setStock(mapped.filter((s) => s.stock > 0));
@@ -311,13 +381,46 @@ export default function EgresoPage() {
   // ─────────────────────────────────────────────
   // Firma: canvas simple
   // ─────────────────────────────────────────────
+  useEffect(() => {
+    const resizeCanvas = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+
+      const nextW = Math.max(1, Math.round(rect.width * dpr));
+      const nextH = Math.max(1, Math.round(rect.height * dpr));
+
+      // Only resize when needed (resizing clears the canvas)
+      if (canvas.width !== nextW || canvas.height !== nextH) {
+        canvas.width = nextW;
+        canvas.height = nextH;
+      }
+    };
+
+    // Initial sizing + on resize/orientation
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+    return () => window.removeEventListener("resize", resizeCanvas);
+  }, []);
+
   const getCanvasPos = (e: any) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
+
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches?.[0]?.clientX ?? e.clientX;
     const clientY = e.touches?.[0]?.clientY ?? e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
+
+    // Scale pointer coordinates from CSS pixels to canvas pixels
+    const scaleX = rect.width ? canvas.width / rect.width : 1;
+    const scaleY = rect.height ? canvas.height / rect.height : 1;
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
   };
 
   const startDraw = (e: any) => {
@@ -345,7 +448,9 @@ export default function EgresoPage() {
     e.preventDefault?.();
 
     const { x, y } = getCanvasPos(e);
-    ctx.lineWidth = 2;
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width ? canvas.width / rect.width : 1;
+    ctx.lineWidth = 2 * scale;
     ctx.lineCap = "round";
     ctx.strokeStyle = "#111";
     ctx.lineTo(x, y);
@@ -384,6 +489,18 @@ export default function EgresoPage() {
       return;
     }
 
+    // supervisor_terreno: solo puede entregar a trabajadores de su mismo centro
+    if (myRole === "supervisor_terreno") {
+      if (!myCentroId) {
+        setError("Supervisor sin centro asignado");
+        return;
+      }
+      if (String(trabajadorSeleccionado.centro_id) !== String(myCentroId)) {
+        setError("Como supervisor, solo puedes entregar a trabajadores de tu centro de trabajo.");
+        return;
+      }
+    }
+
     if (!firmado) {
       setError("La entrega debe ser firmada");
       return;
@@ -418,7 +535,7 @@ export default function EgresoPage() {
 
       const { data: usuario, error: usuarioError } = await supabaseBrowser()
         .from("usuarios")
-        .select("id, empresa_id")
+        .select("id, empresa_id, rol, centro_id")
         .eq("auth_user_id", authData.user.id)
         .maybeSingle();
 
