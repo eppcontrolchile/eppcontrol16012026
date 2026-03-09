@@ -124,7 +124,7 @@ export default function EntregaPage() {
         }
 
         // Roles permitidos para usar la PWA de entregas
-        const allowedRoles = new Set(["admin", "supervisor", "entregas"]);
+        const allowedRoles = new Set(["admin", "bodega", "supervisor_terreno", "solo_entrega", "superadmin", "jefe_area"]);
         const userRole = String(usuario?.rol ?? "").toLowerCase();
         if (!allowedRoles.has(userRole)) {
           setError("No tienes permisos para registrar entregas desde esta app.");
