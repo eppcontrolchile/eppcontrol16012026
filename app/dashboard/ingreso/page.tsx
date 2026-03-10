@@ -151,6 +151,38 @@ const ITEMS_POR_HOJA = 20;
 const [pagina, setPagina] = useState(1);
 const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
+    /* =========================
+    NUEVA FUNCION
+    ========================= */
+
+    const editarNombre = async (row: IngresoHistorialRow) => {
+
+    const nuevoNombre = prompt("Nuevo nombre del EPP:", row.nombre);
+
+    if (!nuevoNombre || !nuevoNombre.trim()) return;
+
+    const resp = await fetch(`/api/stock/lotes/${row.id}/editar`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+    nombre_epp: nuevoNombre.trim(),
+    categoria: row.categoria,
+    marca: row.marca,
+    modelo: row.modelo,
+    talla: row.talla,
+    }),
+    });
+
+    if (!resp.ok) {
+    alert("Error al actualizar nombre");
+    return;
+    }
+
+    await refrescarHistorial();
+    };
+
+    
+    
 useEffect(() => {
   // Cargar historial desde API
   const fetchHistorial = async () => {
@@ -1027,6 +1059,18 @@ return (
                       >
                         ✏️ Modificar
                       </button>
+                                             
+                    <button
+                        type="button"
+                        onClick={() => {
+                        setOpenMenuId(null);
+                        editarNombre(row);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
+                        role="menuitem"
+                        >
+                        📝 Editar nombre
+                        </button>
 
                       <button
                         type="button"
