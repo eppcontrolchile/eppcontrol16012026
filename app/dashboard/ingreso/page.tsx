@@ -436,6 +436,40 @@ const updateItem = (
   setItems(updated);
 };
 
+const setModoIngreso = (index: number, modo: "nuevo" | "existente") => {
+  setItems((prev) =>
+    prev.map((item, i) => {
+      if (i !== index) return item;
+
+      if (modo === "existente") {
+        return {
+          ...item,
+          modoIngreso: "existente",
+          productoId: item.productoId || "",
+          categoria: "",
+          categoriaOtro: "",
+          epp: "",
+          marca: "",
+          modelo: "",
+          tallaNumero: "No aplica",
+        };
+      }
+
+      return {
+        ...item,
+        modoIngreso: "nuevo",
+        productoId: "",
+        categoria: "",
+        categoriaOtro: "",
+        epp: "",
+        marca: "",
+        modelo: "",
+        tallaNumero: "No aplica",
+      };
+    })
+  );
+};
+
 const addItem = () => {
   setItems([
     ...items,
@@ -855,32 +889,31 @@ return (
           <div key={index} className="rounded border p-3 space-y-2">
             <div className="rounded border bg-zinc-50 p-3 space-y-2">
               <div className="text-sm font-medium">Tipo de ingreso</div>
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name={`modoIngreso-${index}`}
-                    checked={item.modoIngreso === "nuevo"}
-                    onChange={() =>
-                      updateItem(index, "modoIngreso", "nuevo")
-                    }
-                  />
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setModoIngreso(index, "nuevo")}
+                  className={
+                    item.modoIngreso === "nuevo"
+                      ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                      : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                  }
+                >
                   Nuevo EPP
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name={`modoIngreso-${index}`}
-                    checked={item.modoIngreso === "existente"}
-                    onChange={() => {
-                      updateItem(index, "modoIngreso", "existente");
-                      if (!item.productoId) {
-                        updateItem(index, "productoId", "");
-                      }
-                    }}
-                  />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModoIngreso(index, "existente")}
+                  className={
+                    item.modoIngreso === "existente"
+                      ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                      : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                  }
+                >
                   Reponer stock existente
-                </label>
+                </button>
               </div>
 
               {item.modoIngreso === "existente" && (
