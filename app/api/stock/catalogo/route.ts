@@ -98,10 +98,10 @@ export async function GET(req: NextRequest) {
       nombre_epp_norm,
       marca_norm,
       modelo_norm,
-      talla_norm,
-      created_at
+      talla_norm
     `)
     .eq("empresa_id", usuario.empresa_id)
+    .eq("anulado", false)
     .order("categoria", { ascending: true })
     .order("nombre_epp", { ascending: true })
     .order("marca", { ascending: true })
@@ -112,7 +112,41 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = Array.isArray(data) ? data : [];
+  const catalogoRows = Array.isArray(data) ? data : [];
+  const productoIds = catalogoRows
+    .map((r: any) => String(r?.id ?? "").trim())
+    .filter(Boolean);
+
+  const stockMap = new Map<string, number>();
+
+  if (productoIds.length > 0) {
+    const { data: lotes, error: lotesError } = await supabaseAdmin
+      .from("lotes_epp")
+      .select("producto_id,cantidad_disponible,anulado")
+      .eq("empresa_id", usuario.empresa_id)
+      .eq("anulado", false)
+      .in("producto_id", productoIds)
+      .gt("cantidad_disponible", 0);
+
+    if (lotesError) {
+      return NextResponse.json({ error: lotesError.message }, { status: 500 });
+    }
+
+    for (const lote of Array.isArray(lotes) ? lotes : []) {
+      const productoId = String((lote as any)?.producto_id ?? "").trim();
+      if (!productoId) continue;
+
+      const qty = Number((lote as any)?.cantidad_disponible ?? 0);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+
+      stockMap.set(productoId, (stockMap.get(productoId) ?? 0) + qty);
+    }
+  }
+
+  const rows = catalogoRows.map((r: any) => ({
+    ...r,
+    stock_actual: stockMap.get(String(r?.id ?? "").trim()) ?? 0,
+  }));
 
   const filtered = !q
     ? rows
