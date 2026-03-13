@@ -1,43 +1,50 @@
-//app/api/stock/catalogo/route.ts
+// app/api/stock/catalogo/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
+const IMPERSONATE_COOKIE = "epp_impersonate";
+
+function safeJsonParse<T = any>(s: string): T | null {
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return null;
+  }
+}
+
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function normText(input: unknown) {
-  return String(input ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+type CatalogoRow = {
+  id: string;
+  categoria: string;
+  nombre_epp: string;
+  marca: string | null;
+  modelo: string | null;
+  talla: string | null;
+  stock_actual: number;
+};
 
-export async function GET(req: NextRequest) {
-  const cookieStore = await cookies();
+export async function GET() {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return NextResponse.json(
-      { error: "Missing public Supabase env vars" },
-      { status: 500 }
-    );
-  }
+    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+      return NextResponse.json(
+        { error: "Faltan variables de entorno de Supabase" },
+        { status: 500 }
+      );
+    }
 
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return NextResponse.json(
-      { error: "Missing server env var SUPABASE_SERVICE_ROLE_KEY" },
-      { status: 500 }
-    );
-  }
+    const cookieStore = await cookies();
 
-  const supabaseAuth = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
+    const supabaseAuth = createServerClient(supabaseUrl, anonKey, {
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -52,124 +59,101 @@ export async function GET(req: NextRequest) {
           }
         },
       },
+    });
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
-  );
 
-  const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
+    const admin = createClient(supabaseUrl, serviceRoleKey);
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabaseAuth.auth.getUser();
+    const { data: me, error: meErr } = await admin
+      .from("usuarios")
+      .select("empresa_id, rol, activo")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
-  if (authError || !user) {
-    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-  }
+    if (meErr || !me?.empresa_id) {
+      return NextResponse.json(
+        { error: "No se pudo resolver empresa del usuario" },
+        { status: 400 }
+      );
+    }
 
-  const { data: usuario, error: usuarioError } = await supabaseAdmin
-    .from("usuarios")
-    .select("empresa_id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+    if (me.activo === false) {
+      return NextResponse.json({ error: "Usuario inactivo" }, { status: 403 });
+    }
 
-  if (usuarioError) {
-    return NextResponse.json({ error: usuarioError.message }, { status: 500 });
-  }
+    let empresaId = String(me.empresa_id);
 
-  if (!usuario?.empresa_id) {
-    return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
-  }
+    const impRaw = cookieStore.get(IMPERSONATE_COOKIE)?.value;
+    if (impRaw && String(me.rol ?? "").toLowerCase() === "superadmin") {
+      const parsed = safeJsonParse<{ empresa_id?: string | null }>(impRaw);
+      const impEmpresaId = String(parsed?.empresa_id ?? "").trim();
+      if (impEmpresaId) {
+        empresaId = impEmpresaId;
+      }
+    }
 
-  const q = normText(new URL(req.url).searchParams.get("q"));
+    const { data: catalogoData, error: catalogoErr } = await admin
+      .from("catalogo_epp")
+      .select("id, categoria, nombre_epp, marca, modelo, talla")
+      .eq("empresa_id", empresaId)
+      .order("categoria", { ascending: true })
+      .order("nombre_epp", { ascending: true });
 
-  const { data, error } = await supabaseAdmin
-    .from("catalogo_epp")
-    .select(`
-      id,
-      categoria,
-      nombre_epp,
-      marca,
-      modelo,
-      talla,
-      categoria_norm,
-      nombre_epp_norm,
-      marca_norm,
-      modelo_norm,
-      talla_norm
-    `)
-    .eq("empresa_id", usuario.empresa_id)
-    .eq("anulado", false)
-    .order("categoria", { ascending: true })
-    .order("nombre_epp", { ascending: true })
-    .order("marca", { ascending: true })
-    .order("modelo", { ascending: true })
-    .order("talla", { ascending: true });
+    if (catalogoErr) {
+      return NextResponse.json({ error: catalogoErr.message }, { status: 500 });
+    }
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const catalogoRows = Array.isArray(data) ? data : [];
-  const productoIds = catalogoRows
-    .map((r: any) => String(r?.id ?? "").trim())
-    .filter(Boolean);
-
-  const stockMap = new Map<string, number>();
-
-  if (productoIds.length > 0) {
-    const { data: lotes, error: lotesError } = await supabaseAdmin
+    const { data: lotesData, error: lotesErr } = await admin
       .from("lotes_epp")
-      .select("producto_id,cantidad_disponible,anulado")
-      .eq("empresa_id", usuario.empresa_id)
-      .eq("anulado", false)
-      .in("producto_id", productoIds)
-      .gt("cantidad_disponible", 0);
+      .select("producto_id, cantidad_disponible, anulado")
+      .eq("empresa_id", empresaId);
 
-    if (lotesError) {
-      return NextResponse.json({ error: lotesError.message }, { status: 500 });
+    if (lotesErr) {
+      return NextResponse.json({ error: lotesErr.message }, { status: 500 });
     }
 
-    for (const lote of Array.isArray(lotes) ? lotes : []) {
+    const stockMap = new Map<string, number>();
+    const productosConLoteNoAnulado = new Set<string>();
+
+    for (const lote of lotesData ?? []) {
       const productoId = String((lote as any)?.producto_id ?? "").trim();
       if (!productoId) continue;
 
-      const qty = Number((lote as any)?.cantidad_disponible ?? 0);
-      if (!Number.isFinite(qty) || qty <= 0) continue;
+      const anulado = Boolean((lote as any)?.anulado ?? false);
+      const disponible = Number((lote as any)?.cantidad_disponible ?? 0);
 
-      stockMap.set(productoId, (stockMap.get(productoId) ?? 0) + qty);
+      if (!anulado) {
+        productosConLoteNoAnulado.add(productoId);
+        stockMap.set(productoId, (stockMap.get(productoId) ?? 0) + (Number.isFinite(disponible) ? disponible : 0));
+      }
     }
+
+    const rows: CatalogoRow[] = (catalogoData ?? [])
+      .map((r: any) => ({
+        id: String(r?.id ?? ""),
+        categoria: String(r?.categoria ?? ""),
+        nombre_epp: String(r?.nombre_epp ?? ""),
+        marca: r?.marca ?? null,
+        modelo: r?.modelo ?? null,
+        talla: r?.talla ?? null,
+        stock_actual: stockMap.get(String(r?.id ?? "")) ?? 0,
+      }))
+      // no mostrar productos cuyo historial quedó solo en lotes anulados
+      .filter((r) => productosConLoteNoAnulado.has(r.id));
+
+    return NextResponse.json({ rows }, { status: 200 });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message || "Error inesperado al cargar catálogo" },
+      { status: 500 }
+    );
   }
-
-  const rows = catalogoRows.map((r: any) => ({
-    ...r,
-    stock_actual: stockMap.get(String(r?.id ?? "").trim()) ?? 0,
-  }));
-
-  const filtered = !q
-    ? rows
-    : rows.filter((r: any) => {
-        const hay = normText(
-          [
-            r?.categoria,
-            r?.nombre_epp,
-            r?.marca,
-            r?.modelo,
-            r?.talla,
-          ].join(" ")
-        );
-        return hay.includes(q);
-      });
-
-  return NextResponse.json(
-    { rows: filtered },
-    {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    }
-  );
 }

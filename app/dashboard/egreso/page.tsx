@@ -27,11 +27,8 @@ type StockRow = {
 type EgresoItemUI = {
   categoria: string;
   producto_id: string;
-  // Composite key to uniquely identify stock rows by nombre + marca + modelo
   eppKey: string;
-  // Display label (includes marca/modelo concatenated when available)
   eppLabel: string;
-  // Normalized fields (used for payload)
   nombre_epp: string;
   marca?: string | null;
   modelo?: string | null;
@@ -76,12 +73,10 @@ function splitNombreMarcaModelo(
       ? null
       : String(rawModelo).trim();
 
-  // If API already provides marca/modelo, trust it.
   if (marca0 || modelo0) {
     return { nombre: nombre0, marca: marca0, modelo: modelo0 };
   }
 
-  // Fallback: if nombre comes like "Casco (3M - X5000)" or "Casco (3M)", parse it.
   const m = /^(.+?)\s*\((.+?)\)\s*$/.exec(nombre0);
   if (m) {
     const nombre = String(m[1] ?? "").trim();
@@ -103,13 +98,13 @@ export default function EgresoPage() {
 
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
   const [trabajadorId, setTrabajadorId] = useState<string>("");
 
   const [stock, setStock] = useState<StockRow[]>([]);
 
-  // Rol/centro del usuario logueado (para reglas de supervisor_terreno)
   const [myRole, setMyRole] = useState<string>("");
   const [myCentroId, setMyCentroId] = useState<string | null>(null);
 
@@ -130,10 +125,9 @@ export default function EgresoPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
   const [firmado, setFirmado] = useState<boolean>(false);
+  const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const shouldScrollToNewItemRef = useRef(false);
 
-  // ─────────────────────────────────────────────
-  // Load trabajadores activos + stock
-  // ─────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
@@ -166,10 +160,10 @@ export default function EgresoPage() {
         const myCentro = (usuario as any)?.centro_id
           ? String((usuario as any).centro_id)
           : null;
+
         setMyRole(rol);
         setMyCentroId(myCentro);
 
-        // Trabajadores activos
         let trabQuery = supabaseBrowser()
           .from("trabajadores")
           .select("id,nombre,rut,activo,centro_id")
@@ -177,7 +171,6 @@ export default function EgresoPage() {
           .eq("activo", true)
           .order("nombre", { ascending: true });
 
-        // supervisor_terreno: solo trabajadores de su centro asignado
         if (rol === "supervisor_terreno") {
           if (!myCentro) {
             setError("Supervisor sin centro asignado.");
@@ -205,11 +198,9 @@ export default function EgresoPage() {
           })) ?? []
         );
 
-        // Stock
         let mapped: StockRow[] = [];
 
         if (rol === "supervisor_terreno") {
-          // supervisor_terreno: solo puede ver/entregar stock de su CT
           if (!myCentro) {
             setError("Supervisor sin centro asignado.");
             setLoading(false);
@@ -233,7 +224,6 @@ export default function EgresoPage() {
             return;
           }
 
-          // Agregar por categoria/nombre/marca/modelo/talla
           const agg = new Map<string, StockRow>();
           for (const r of (lotes as any[]) ?? []) {
             const categoria = String(r?.categoria ?? "");
@@ -272,7 +262,6 @@ export default function EgresoPage() {
 
           mapped = Array.from(agg.values());
         } else {
-          // Otros roles: stock agregado desde API server (global + centros según implementación)
           const stockResp = await fetch("/api/stock", { cache: "no-store" });
           if (!stockResp.ok) {
             setError("No se pudo cargar el stock.");
@@ -282,7 +271,6 @@ export default function EgresoPage() {
 
           const stockRaw = await stockResp.json().catch(() => []);
           mapped = (Array.isArray(stockRaw) ? stockRaw : []).map((r: any) => {
-            // Robust mapping: allow API to return marca/modelo with alternate field names
             const marca =
               r?.marca ??
               r?.marca_epp ??
@@ -319,7 +307,6 @@ export default function EgresoPage() {
           });
         }
 
-        // Solo lo disponible
         setStock(mapped.filter((s) => s.stock > 0));
         setError("");
         setLoading(false);
@@ -339,7 +326,6 @@ export default function EgresoPage() {
   }, [stock]);
 
   const eppsPorCategoria = useMemo(() => {
-    // Map categoria -> list of { key, producto_id, nombre, marca, modelo, label }
     const map = new Map<
       string,
       {
@@ -360,7 +346,6 @@ export default function EgresoPage() {
       const label = mm ? `${s.nombre} (${mm})` : s.nombre;
       const key = buildEppKey(s.nombre, s.marca ?? null, s.modelo ?? null);
 
-      // Ensure one option per unique key (nombre+marca+modelo)
       if (!arr.some((x) => x.key === key)) {
         arr.push({
           key,
@@ -425,6 +410,10 @@ export default function EgresoPage() {
   };
 
   const addItem = () => {
+    if (submitting) return;
+
+    shouldScrollToNewItemRef.current = true;
+
     setItems((prev) => [
       ...prev,
       {
@@ -442,12 +431,28 @@ export default function EgresoPage() {
   };
 
   const removeItem = (index: number) => {
+    if (submitting) return;
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // ─────────────────────────────────────────────
-  // Firma: canvas simple
-  // ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!shouldScrollToNewItemRef.current) return;
+    if (!items.length) return;
+
+    const lastIndex = items.length - 1;
+    const node = itemRefs.current[lastIndex];
+    if (!node) return;
+
+    shouldScrollToNewItemRef.current = false;
+
+    requestAnimationFrame(() => {
+      node.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [items]);
+
   useEffect(() => {
     const resizeCanvas = () => {
       const canvas = canvasRef.current;
@@ -459,14 +464,12 @@ export default function EgresoPage() {
       const nextW = Math.max(1, Math.round(rect.width * dpr));
       const nextH = Math.max(1, Math.round(rect.height * dpr));
 
-      // Only resize when needed (resizing clears the canvas)
       if (canvas.width !== nextW || canvas.height !== nextH) {
         canvas.width = nextW;
         canvas.height = nextH;
       }
     };
 
-    // Initial sizing + on resize/orientation
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
@@ -480,7 +483,6 @@ export default function EgresoPage() {
     const clientX = e.touches?.[0]?.clientX ?? e.clientX;
     const clientY = e.touches?.[0]?.clientY ?? e.clientY;
 
-    // Scale pointer coordinates from CSS pixels to canvas pixels
     const scaleX = rect.width ? canvas.width / rect.width : 1;
     const scaleY = rect.height ? canvas.height / rect.height : 1;
 
@@ -492,7 +494,7 @@ export default function EgresoPage() {
 
   const startDraw = (e: any) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || submitting) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -501,12 +503,11 @@ export default function EgresoPage() {
     ctx.beginPath();
     ctx.moveTo(x, y);
 
-    // Evita re-render por cada trazo: marcamos "firmado" una sola vez al iniciar
     if (!firmado) setFirmado(true);
   };
 
   const draw = (e: any) => {
-    if (!drawingRef.current) return;
+    if (!drawingRef.current || submitting) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -529,6 +530,8 @@ export default function EgresoPage() {
   };
 
   const clearFirma = () => {
+    if (submitting) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -540,6 +543,8 @@ export default function EgresoPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (submitting) return;
 
     if (!trabajadorId) {
       setError("Selecciona un trabajador");
@@ -556,7 +561,6 @@ export default function EgresoPage() {
       return;
     }
 
-    // supervisor_terreno: solo puede entregar a trabajadores de su mismo centro
     if (myRole === "supervisor_terreno") {
       if (!myCentroId) {
         setError("Supervisor sin centro asignado");
@@ -589,6 +593,7 @@ export default function EgresoPage() {
         setError("Completa correctamente todos los EPP");
         return;
       }
+
       const disp = stockDisponiblePara(item.categoria, item.eppKey, item.tallaNumero);
       if (item.cantidad > disp) {
         const show = item.eppLabel || item.nombre_epp || "EPP";
@@ -600,6 +605,8 @@ export default function EgresoPage() {
     }
 
     try {
+      setSubmitting(true);
+
       const { data: authData, error: authError } =
         await supabaseBrowser().auth.getUser();
 
@@ -643,7 +650,6 @@ export default function EgresoPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // idempotencia simple
           "Idempotency-Key": crypto.randomUUID(),
         },
         body: JSON.stringify(payload),
@@ -665,6 +671,8 @@ export default function EgresoPage() {
       router.push("/dashboard/entregas");
     } catch (err: any) {
       setError(err?.message || "Error inesperado");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -694,6 +702,7 @@ export default function EgresoPage() {
             className="input"
             value={trabajadorId}
             onChange={(e) => setTrabajadorId(e.target.value)}
+            disabled={submitting}
           >
             <option value="">Selecciona trabajador activo…</option>
             {trabajadores.map((t) => (
@@ -713,7 +722,8 @@ export default function EgresoPage() {
             <button
               type="button"
               onClick={addItem}
-              className="rounded border px-3 py-1 text-sm"
+              disabled={submitting}
+              className="rounded border px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
               + Agregar EPP
             </button>
@@ -729,11 +739,18 @@ export default function EgresoPage() {
                 : 0;
 
             return (
-              <div key={idx} className="rounded border p-3 space-y-2">
+              <div
+                key={idx}
+                ref={(el) => {
+                  itemRefs.current[idx] = el;
+                }}
+                className="rounded border p-3 space-y-2"
+              >
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <select
                     className="input"
                     value={it.categoria}
+                    disabled={submitting}
                     onChange={(e) => {
                       updateItem(idx, {
                         categoria: e.target.value,
@@ -758,14 +775,14 @@ export default function EgresoPage() {
                   <select
                     className="input"
                     value={it.eppKey}
-                    disabled={!it.categoria}
+                    disabled={!it.categoria || submitting}
                     onChange={(e) => {
                       const nextKey = e.target.value;
                       const meta = parseEppKey(nextKey);
-                      // Find the label from options (fallback to nombre)
                       const opt = epps.find((o) => o.key === nextKey);
+
                       updateItem(idx, {
-                        producto_id: (opt as any)?.producto_id ?? "",
+                        producto_id: opt?.producto_id ?? "",
                         eppKey: nextKey,
                         eppLabel: opt?.label ?? meta.nombre,
                         nombre_epp: meta.nombre,
@@ -786,7 +803,7 @@ export default function EgresoPage() {
                   <select
                     className="input"
                     value={it.tallaNumero}
-                    disabled={!it.categoria || !it.eppKey}
+                    disabled={!it.categoria || !it.eppKey || submitting}
                     onChange={(e) => updateItem(idx, { tallaNumero: e.target.value })}
                   >
                     <option value="">Talla/Número…</option>
@@ -802,6 +819,7 @@ export default function EgresoPage() {
                     type="number"
                     min={1}
                     value={it.cantidad}
+                    disabled={submitting}
                     onChange={(e) => updateItem(idx, { cantidad: Number(e.target.value) })}
                     placeholder="Cantidad"
                   />
@@ -821,7 +839,8 @@ export default function EgresoPage() {
                     <button
                       type="button"
                       onClick={() => removeItem(idx)}
-                      className="text-red-600 underline"
+                      disabled={submitting}
+                      className="text-red-600 underline disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Quitar
                     </button>
@@ -842,7 +861,8 @@ export default function EgresoPage() {
             <button
               type="button"
               onClick={clearFirma}
-              className="rounded border px-3 py-1 text-sm"
+              disabled={submitting}
+              className="rounded border px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
               Limpiar
             </button>
@@ -873,10 +893,10 @@ export default function EgresoPage() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-700"
-          disabled={stock.length === 0}
+          disabled={stock.length === 0 || submitting}
+          className="w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Registrar egreso
+          {submitting ? "Registrando egreso..." : "Registrar egreso"}
         </button>
       </form>
     </div>
