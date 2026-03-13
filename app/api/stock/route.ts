@@ -21,6 +21,7 @@ export const runtime = "nodejs";
 
 type StockOutRow = {
   id: string; // empresa_id|categoria|nombre_epp|talla (legacy format kept)
+  producto_id: string;
   variant_key?: string; // categoria|nombre|marca|modelo|talla (unique per variant)
   categoria: string;
   nombre: string;
@@ -110,6 +111,27 @@ export async function GET(req: NextRequest) {
 
     // 3) A partir de aquí, SIEMPRE scopiado por empresaId
 
+    // 3.1) Stock críticos por empresa
+    const { data: crits, error: critErr } = await admin
+      .from("stock_criticos")
+      .select("categoria,nombre_epp,talla,stock_critico")
+      .eq("empresa_id", empresaId);
+
+    if (critErr) {
+      return NextResponse.json({ error: critErr.message }, { status: 500 });
+    }
+
+    const critMap = new Map<string, number>();
+    for (const c of crits ?? []) {
+      const categoria = String((c as any).categoria ?? "");
+      const nombre = String((c as any).nombre_epp ?? "");
+      const tallaRaw = String((c as any).talla ?? "");
+      const talla = tallaRaw.trim() === "" ? null : tallaRaw;
+      const key = `${categoria}||${nombre}||${talla ?? ""}`;
+      const v = Number((c as any).stock_critico ?? 0);
+      critMap.set(key, Number.isFinite(v) ? v : 0);
+    }
+
     // 3.1) Lotes NO anulados y disponibles > 0
     // - scope default: SOLO Inventario Empresa (global)
     // - scope=centros: SOLO stock asignado a centros (centro)
@@ -119,7 +141,7 @@ export async function GET(req: NextRequest) {
       const { data: lotsCentro, error: lotsCentroErr } = await admin
         .from("lotes_epp")
         .select(
-          "categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id,centros_trabajo:centro_id(nombre)"
+          "producto_id,categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id,centros_trabajo:centro_id(nombre)"
         )
         .eq("empresa_id", empresaId)
         .eq("anulado", false)
@@ -135,6 +157,7 @@ export async function GET(req: NextRequest) {
       const aggCentro = new Map<
         string,
         {
+          producto_id: string;
           centro_id: string;
           centro_nombre: string | null;
           categoria: string;
@@ -156,6 +179,9 @@ export async function GET(req: NextRequest) {
             ? null
             : String(centroNombreRaw).trim();
 
+        const productoId = String((r as any).producto_id ?? "").trim();
+        if (!productoId) continue;
+
         const categoria = String((r as any).categoria ?? "");
         const nombre = String((r as any).nombre_epp ?? "");
 
@@ -174,10 +200,11 @@ export async function GET(req: NextRequest) {
         const qty = Number((r as any).cantidad_disponible ?? 0);
         if (!Number.isFinite(qty) || qty <= 0) continue;
 
-        const key = `${centroId}||${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
+        const key = `${centroId}||${productoId}`;
         const prev = aggCentro.get(key);
         if (!prev) {
           aggCentro.set(key, {
+            producto_id: productoId,
             centro_id: centroId,
             centro_nombre: centroNombre,
             categoria,
@@ -200,6 +227,7 @@ export async function GET(req: NextRequest) {
 
         return {
           id: `${empresaId}|${x.centro_id}|${x.categoria}|${x.nombre}|${tallaForId}`,
+          producto_id: x.producto_id,
           variant_key: variantKey,
           centro_id: x.centro_id,
           centro_nombre: x.centro_nombre,
@@ -230,7 +258,7 @@ export async function GET(req: NextRequest) {
     {
       const { data: lotsData, error: lotsErr } = await admin
         .from("lotes_epp")
-        .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible")
+        .select("producto_id,categoria,nombre_epp,talla,marca,modelo,cantidad_disponible")
         .eq("empresa_id", empresaId)
         .eq("anulado", false)
         .gt("cantidad_disponible", 0)
@@ -243,31 +271,13 @@ export async function GET(req: NextRequest) {
       lots = lotsData;
     }
 
-    // 3.2) Stock críticos por empresa
-    const { data: crits, error: critErr } = await admin
-      .from("stock_criticos")
-      .select("categoria,nombre_epp,talla,stock_critico")
-      .eq("empresa_id", empresaId);
-
-    if (critErr) {
-      return NextResponse.json({ error: critErr.message }, { status: 500 });
-    }
-
-    const critMap = new Map<string, number>();
-    for (const c of crits ?? []) {
-      const categoria = String((c as any).categoria ?? "");
-      const nombre = String((c as any).nombre_epp ?? "");
-      const tallaRaw = String((c as any).talla ?? "");
-      const talla = tallaRaw.trim() === "" ? null : tallaRaw;
-      const key = `${categoria}||${nombre}||${talla ?? ""}`;
-      const v = Number((c as any).stock_critico ?? 0);
-      critMap.set(key, Number.isFinite(v) ? v : 0);
-    }
+    // Deleted old duplicated stock críticos block here
 
     // 4) Agregación por categoria/nombre/talla usando cantidad_disponible
     const agg = new Map<
       string,
       {
+        producto_id: string;
         categoria: string;
         nombre: string;
         marca: string | null;
@@ -278,6 +288,9 @@ export async function GET(req: NextRequest) {
     >();
 
     for (const r of lots ?? []) {
+      const productoId = String((r as any).producto_id ?? "").trim();
+      if (!productoId) continue;
+
       const categoria = String((r as any).categoria ?? "");
       const nombre = String((r as any).nombre_epp ?? "");
       const tallaRaw = (r as any).talla;
@@ -295,10 +308,18 @@ export async function GET(req: NextRequest) {
       const qty = Number((r as any).cantidad_disponible ?? 0);
       if (!Number.isFinite(qty) || qty <= 0) continue;
 
-      const key = `${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
+      const key = productoId;
       const prev = agg.get(key);
       if (!prev) {
-        agg.set(key, { categoria, nombre, marca, modelo, talla, stock_total: qty });
+        agg.set(key, {
+          producto_id: productoId,
+          categoria,
+          nombre,
+          marca,
+          modelo,
+          talla,
+          stock_total: qty,
+        });
       } else {
         prev.stock_total += qty;
       }
@@ -315,6 +336,7 @@ export async function GET(req: NextRequest) {
 
       return {
         id: `${empresaId}|${x.categoria}|${x.nombre}|${tallaForId}`,
+        producto_id: x.producto_id,
         variant_key: variantKey,
         categoria: x.categoria,
         nombre: x.nombre,

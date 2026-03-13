@@ -15,9 +15,19 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 
+
 function isUuid(v: unknown) {
   const s = String(v ?? "").trim();
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function normText(input: unknown) {
+  return String(input ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function decodeBase64UrlJson(v: string): any | null {
@@ -269,17 +279,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ─────────────────────────────────────────────
-    // Validación explícita de cada item en items (marca/modelo opcional)
+    // Validación explícita de cada item en items
+    // Nuevo modelo: producto_id + cantidad
     // ─────────────────────────────────────────────
     for (const item of items) {
-      const categoriaOk = item && typeof item.categoria === "string" && item.categoria.trim() !== "";
-      const nombreOk = item && typeof item.nombre_epp === "string" && item.nombre_epp.trim() !== "";
+      const productoIdOk = item && isUuid(item.producto_id);
       const cantidadOk = item && typeof item.cantidad === "number" && item.cantidad > 0;
 
+      const categoriaOk = item?.categoria == null || typeof item.categoria === "string";
+      const nombreOk = item?.nombre_epp == null || typeof item.nombre_epp === "string";
+      const tallaOk = item?.talla == null || typeof item.talla === "string";
       const marcaOk = item?.marca == null || typeof item.marca === "string";
       const modeloOk = item?.modelo == null || typeof item.modelo === "string";
 
-      if (!categoriaOk || !nombreOk || !cantidadOk || !marcaOk || !modeloOk) {
+      if (!productoIdOk || !cantidadOk || !categoriaOk || !nombreOk || !tallaOk || !marcaOk || !modeloOk) {
         return NextResponse.json(
           { error: "Item inválido en items" },
           { status: 400 }
@@ -288,15 +301,25 @@ export async function POST(req: NextRequest) {
     }
 
     // Prepara lookup para fallback de marca/modelo en PDF
-    const reqMetaByKey = new Map<string, { marca: string | null; modelo: string | null }>();
+    const reqMetaByProductoId = new Map<string, { marca: string | null; modelo: string | null }>();
+    const reqMetaByLegacyKey = new Map<string, { marca: string | null; modelo: string | null }>();
+
     for (const it of items) {
-      const cat = String(it.categoria ?? "").trim();
-      const nom = String(it.nombre_epp ?? "").trim();
-      const talla = it.talla != null ? String(it.talla).trim() : "";
-      const marca = it.marca != null && String(it.marca).trim() ? String(it.marca).trim() : null;
-      const modelo = it.modelo != null && String(it.modelo).trim() ? String(it.modelo).trim() : null;
-      const key = `${cat}||${nom}||${talla}`;
-      if (!reqMetaByKey.has(key)) reqMetaByKey.set(key, { marca, modelo });
+      const productoId = String(it?.producto_id ?? "").trim();
+      const cat = String(it?.categoria ?? "").trim();
+      const nom = String(it?.nombre_epp ?? "").trim();
+      const talla = it?.talla != null ? String(it.talla).trim() : "";
+      const marca = it?.marca != null && String(it.marca).trim() ? String(it.marca).trim() : null;
+      const modelo = it?.modelo != null && String(it.modelo).trim() ? String(it.modelo).trim() : null;
+
+      if (productoId && !reqMetaByProductoId.has(productoId)) {
+        reqMetaByProductoId.set(productoId, { marca, modelo });
+      }
+
+      const legacyKey = `${normText(cat)}||${normText(nom)}||${normText(talla)}`;
+      if (!reqMetaByLegacyKey.has(legacyKey)) {
+        reqMetaByLegacyKey.set(legacyKey, { marca, modelo });
+      }
     }
 
     // ─────────────────────────────────────────────
@@ -380,7 +403,7 @@ export async function POST(req: NextRequest) {
             talla,
             cantidad,
             lote_id,
-            lotes_epp:lote_id ( marca, modelo )
+            lotes_epp:lote_id ( producto_id, marca, modelo )
           )
         `)
         .eq("id", entregaId)
@@ -450,12 +473,15 @@ export async function POST(req: NextRequest) {
             const cat = String(i?.categoria ?? "").trim();
             const nom = String(i?.nombre_epp ?? "").trim();
             const talla = i?.talla != null ? String(i.talla).trim() : "";
-            const key = `${cat}||${nom}||${talla}`;
+            const legacyKey = `${normText(cat)}||${normText(nom)}||${normText(talla)}`;
 
-            const fallback = reqMetaByKey.get(key);
-
-            // `lotes_epp:lote_id ( marca, modelo )` may come as object or as single-item array
+            // `lotes_epp:lote_id ( producto_id, marca, modelo )` may come as object or as single-item array
             const loteRel = Array.isArray(i?.lotes_epp) ? i.lotes_epp[0] : i?.lotes_epp;
+            const productoIdFromLote = loteRel?.producto_id != null ? String(loteRel.producto_id).trim() : "";
+
+            const fallback =
+              (productoIdFromLote ? reqMetaByProductoId.get(productoIdFromLote) : undefined) ??
+              reqMetaByLegacyKey.get(legacyKey);
 
             const marcaFromLote =
               loteRel?.marca != null && String(loteRel.marca).trim()

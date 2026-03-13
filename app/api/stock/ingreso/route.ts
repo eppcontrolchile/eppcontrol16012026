@@ -21,6 +21,15 @@ function isRutLike(input: string) {
   return !input || /^[0-9]{7,8}-[0-9K]$/.test(input);
 }
 
+function normText(input: unknown) {
+  return String(input ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 type CompraPayload = {
   tipo?: "factura" | "guia" | "oc" | "otro" | string | null;
   numero?: string | null;
@@ -177,6 +186,64 @@ export async function POST(req: NextRequest) {
 
   const empresaId = usuario.empresa_id;
 
+  async function ensureProductoCatalogo(params: {
+    empresaId: string;
+    categoria: string;
+    nombre_epp: string;
+    marca: string | null;
+    modelo: string | null;
+    talla: string | null;
+  }) {
+    const categoria_norm = normText(params.categoria);
+    const nombre_epp_norm = normText(params.nombre_epp);
+    const marca_norm = normText(params.marca);
+    const modelo_norm = normText(params.modelo);
+    const talla_norm = normText(params.talla);
+
+    const { data: existente, error: existingError } = await supabaseAdmin
+      .from("catalogo_epp")
+      .select("id")
+      .eq("empresa_id", params.empresaId)
+      .eq("categoria_norm", categoria_norm)
+      .eq("nombre_epp_norm", nombre_epp_norm)
+      .eq("marca_norm", marca_norm)
+      .eq("modelo_norm", modelo_norm)
+      .eq("talla_norm", talla_norm)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+
+    if (existente?.id) {
+      return String(existente.id);
+    }
+
+    const { data: creado, error: createError } = await supabaseAdmin
+      .from("catalogo_epp")
+      .insert({
+        empresa_id: params.empresaId,
+        categoria: params.categoria,
+        nombre_epp: params.nombre_epp,
+        marca: params.marca,
+        modelo: params.modelo,
+        talla: params.talla,
+        categoria_norm,
+        nombre_epp_norm,
+        marca_norm,
+        modelo_norm,
+        talla_norm,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (createError || !creado?.id) {
+      throw new Error(createError?.message || "No se pudo crear producto de catálogo");
+    }
+
+    return String(creado.id);
+  }
+
   // 4) Normalize payload: accept either { items: [...] } or a single item object
   const items: any[] = Array.isArray(body.items)
     ? body.items
@@ -200,56 +267,68 @@ export async function POST(req: NextRequest) {
   // 5) Validate + build rows
   let rows: any[];
   try {
-    rows = items.map((it) => {
-      const categoria = String(it?.categoria ?? "").trim();
-      const nombre_epp = String(it?.nombre_epp ?? it?.nombreEpp ?? "").trim();
+    rows = await Promise.all(
+      items.map(async (it) => {
+        const categoria = String(it?.categoria ?? "").trim();
+        const nombre_epp = String(it?.nombre_epp ?? it?.nombreEpp ?? "").trim();
 
-      const marcaRaw = it?.marca != null ? String(it.marca).trim() : "";
-      const modeloRaw = it?.modelo != null ? String(it.modelo).trim() : "";
-      const marca = marcaRaw ? marcaRaw : null;
-      const modelo = modeloRaw ? modeloRaw : null;
+        const marcaRaw = it?.marca != null ? String(it.marca).trim() : "";
+        const modeloRaw = it?.modelo != null ? String(it.modelo).trim() : "";
+        const marca = marcaRaw ? marcaRaw : null;
+        const modelo = modeloRaw ? modeloRaw : null;
 
-      // Normaliza talla: variantes de "No aplica" se guardan como NULL
-      const tallaRaw = it?.talla ? String(it.talla).trim() : "";
-      const talla =
-        tallaRaw &&
-        !["no aplica", "noaplica", "n/a", "na", "-"].includes(
-          tallaRaw.toLowerCase()
-        )
-          ? tallaRaw
-          : null;
+        // Normaliza talla: variantes de "No aplica" se guardan como NULL
+        const tallaRaw = it?.talla ? String(it.talla).trim() : "";
+        const talla =
+          tallaRaw &&
+          !["no aplica", "noaplica", "n/a", "na", "-"].includes(
+            tallaRaw.toLowerCase()
+          )
+            ? tallaRaw
+            : null;
 
-      const cantidadNum = Number(it?.cantidad);
-      const costoNum = Number(it?.costo_unitario_iva ?? it?.costoUnitarioIVA);
+        const cantidadNum = Number(it?.cantidad);
+        const costoNum = Number(it?.costo_unitario_iva ?? it?.costoUnitarioIVA);
 
-      const fecha = it?.fecha_ingreso
-        ? String(it.fecha_ingreso)
-        : new Date().toISOString().slice(0, 10);
+        const fecha = it?.fecha_ingreso
+          ? String(it.fecha_ingreso)
+          : new Date().toISOString().slice(0, 10);
 
-      if (!categoria || !nombre_epp) {
-        throw new Error("Payload incompleto");
-      }
-      if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
-        throw new Error("Cantidad inválida");
-      }
-      if (!Number.isFinite(costoNum) || costoNum <= 0) {
-        throw new Error("Costo inválido");
-      }
+        if (!categoria || !nombre_epp) {
+          throw new Error("Payload incompleto");
+        }
+        if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
+          throw new Error("Cantidad inválida");
+        }
+        if (!Number.isFinite(costoNum) || costoNum <= 0) {
+          throw new Error("Costo inválido");
+        }
 
-      return {
-        empresa_id: empresaId,
-        usuario_id: usuario.id,
-        categoria,
-        nombre_epp,
-        marca,
-        modelo,
-        talla,
-        cantidad_inicial: cantidadNum,
-        cantidad_disponible: cantidadNum,
-        costo_unitario_iva: costoNum,
-        fecha_ingreso: fecha,
-      };
-    });
+        const producto_id = await ensureProductoCatalogo({
+          empresaId,
+          categoria,
+          nombre_epp,
+          marca,
+          modelo,
+          talla,
+        });
+
+        return {
+          empresa_id: empresaId,
+          usuario_id: usuario.id,
+          producto_id,
+          categoria,
+          nombre_epp,
+          marca,
+          modelo,
+          talla,
+          cantidad_inicial: cantidadNum,
+          cantidad_disponible: cantidadNum,
+          costo_unitario_iva: costoNum,
+          fecha_ingreso: fecha,
+        };
+      })
+    );
   } catch (e: any) {
     const msg = e?.message || "Payload inválido";
     const status =

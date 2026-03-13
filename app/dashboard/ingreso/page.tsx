@@ -3,7 +3,6 @@
 
 import { useEffect, useState } from "react";
 
-import { useRouter } from "next/navigation";
 
 // Helpers para parsear fechas correctamente como LOCAL (YYYY-MM-DD)
 function parseDateFlexible(input: string): Date {
@@ -75,6 +74,8 @@ function normSearch(v: any) {
 
 
 type IngresoItem = {
+  modoIngreso: "nuevo" | "existente";
+  productoId?: string;
   categoria: string;
   categoriaOtro?: string;
   epp: string;
@@ -117,8 +118,16 @@ type IngresoHistorialRow = {
   cantidad_disponible: number;
 };
 
+type CatalogoEppRow = {
+  id: string;
+  categoria: string;
+  nombre_epp: string;
+  marca: string | null;
+  modelo: string | null;
+  talla: string | null;
+};
+
 export default function IngresoPage() {
-const router = useRouter();
 
 // Documento de compra (cabecera)
 const [docTipo, setDocTipo] = useState<"factura" | "guia" | "oc" | "otro">("factura");
@@ -130,6 +139,8 @@ const [docMore, setDocMore] = useState(false);
 
 const [items, setItems] = useState<IngresoItem[]>([
   {
+    modoIngreso: "nuevo",
+    productoId: "",
     categoria: "",
     epp: "",
     marca: "",
@@ -150,38 +161,126 @@ const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("desc");
 const ITEMS_POR_HOJA = 20;
 const [pagina, setPagina] = useState(1);
 const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+const [catalogo, setCatalogo] = useState<CatalogoEppRow[]>([]);
+const [catalogoLoading, setCatalogoLoading] = useState(false);
+const [catalogoError, setCatalogoError] = useState<string>("");
 
     /* =========================
     NUEVA FUNCION
     ========================= */
 
     const editarNombre = async (row: IngresoHistorialRow) => {
+      if (row.anulado) {
+        alert("No se puede editar el nombre de un ingreso anulado.");
+        return;
+      }
 
-    const nuevoNombre = prompt("Nuevo nombre del EPP:", row.nombre);
+      const nuevoNombre = prompt("Nuevo nombre del EPP:", row.nombre);
+      if (nuevoNombre == null) return;
 
-    if (!nuevoNombre || !nuevoNombre.trim()) return;
+      const nombreLimpio = nuevoNombre.trim();
+      if (!nombreLimpio) {
+        alert("Debes ingresar un nombre válido.");
+        return;
+      }
 
-    const resp = await fetch(`/api/stock/lotes/${row.id}/editar`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-    nombre_epp: nuevoNombre.trim(),
-    categoria: row.categoria,
-    marca: row.marca,
-    modelo: row.modelo,
-    talla: row.talla,
-    }),
-    });
+      if (nombreLimpio === row.nombre.trim()) {
+        return;
+      }
 
-    if (!resp.ok) {
-    alert("Error al actualizar nombre");
-    return;
-    }
+      try {
+        const resp = await fetch(`/api/stock/lotes/${row.id}/editar`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nombre_epp: nombreLimpio,
+            categoria: row.categoria,
+            marca: row.marca,
+            modelo: row.modelo,
+            talla: row.talla,
+          }),
+        });
 
-    await refrescarHistorial();
+        const result = await resp.json().catch(() => null);
+
+        if (!resp.ok) {
+          alert(result?.error || "Error al actualizar nombre");
+          return;
+        }
+
+        await refrescarHistorial();
+        alert("Nombre actualizado correctamente");
+      } catch {
+        alert("Error de red al actualizar nombre");
+      }
     };
-
     
+    
+const formatCatalogoLabel = (row: CatalogoEppRow) => {
+  const base = [row.categoria, row.nombre_epp].filter(Boolean).join(" | ");
+  const extra = [row.marca, row.modelo, row.talla ?? "No aplica"]
+    .filter((v) => v != null && String(v).trim() !== "")
+    .join(" | ");
+  return extra ? `${base} | ${extra}` : base;
+};
+
+const applyCatalogoToItem = (index: number, productoId: string) => {
+  const selected = catalogo.find((r) => r.id === productoId);
+  if (!selected) return;
+
+  const updated = [...items];
+  updated[index] = {
+    ...updated[index],
+    modoIngreso: "existente",
+    productoId,
+    categoria: selected.categoria,
+    categoriaOtro: "",
+    epp: selected.nombre_epp,
+    marca: selected.marca ?? "",
+    modelo: selected.modelo ?? "",
+    tallaNumero: selected.talla ?? "No aplica",
+  };
+  setItems(updated);
+};
+
+useEffect(() => {
+  const fetchCatalogo = async () => {
+    try {
+      setCatalogoLoading(true);
+      setCatalogoError("");
+
+      const resp = await fetch("/api/stock/catalogo", {
+        cache: "no-store",
+      });
+
+      const raw = await resp.json().catch(() => null);
+
+      if (!resp.ok) {
+        throw new Error(raw?.error || "Error al cargar catálogo");
+      }
+
+      const rows: CatalogoEppRow[] = Array.isArray(raw?.rows)
+        ? raw.rows.map((r: any) => ({
+            id: String(r?.id ?? ""),
+            categoria: String(r?.categoria ?? ""),
+            nombre_epp: String(r?.nombre_epp ?? ""),
+            marca: r?.marca ?? null,
+            modelo: r?.modelo ?? null,
+            talla: r?.talla ?? null,
+          }))
+        : [];
+
+      setCatalogo(rows);
+    } catch (err: any) {
+      setCatalogo([]);
+      setCatalogoError(err?.message || "Error al cargar catálogo");
+    } finally {
+      setCatalogoLoading(false);
+    }
+  };
+
+  fetchCatalogo();
+}, []);
     
 useEffect(() => {
   // Cargar historial desde API
@@ -341,6 +440,8 @@ const addItem = () => {
   setItems([
     ...items,
     {
+      modoIngreso: "nuevo",
+      productoId: "",
       categoria: "",
       epp: "",
       marca: "",
@@ -367,6 +468,11 @@ const handleSubmit = async (e: React.FormEvent) => {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const fila = i + 1;
+
+    if (item.modoIngreso === "existente" && !item.productoId) {
+      alert(`Fila ${fila}: debes seleccionar un EPP existente para reponer stock`);
+      return;
+    }
 
     if (!item.categoria) {
       alert(`Fila ${fila}: falta Categoría`);
@@ -747,10 +853,69 @@ return (
         const tallasDisponibles: { id: string; tallaNumero: string }[] = [];
         return (
           <div key={index} className="rounded border p-3 space-y-2">
+            <div className="rounded border bg-zinc-50 p-3 space-y-2">
+              <div className="text-sm font-medium">Tipo de ingreso</div>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={`modoIngreso-${index}`}
+                    checked={item.modoIngreso === "nuevo"}
+                    onChange={() =>
+                      updateItem(index, "modoIngreso", "nuevo")
+                    }
+                  />
+                  Nuevo EPP
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={`modoIngreso-${index}`}
+                    checked={item.modoIngreso === "existente"}
+                    onChange={() => {
+                      updateItem(index, "modoIngreso", "existente");
+                      if (!item.productoId) {
+                        updateItem(index, "productoId", "");
+                      }
+                    }}
+                  />
+                  Reponer stock existente
+                </label>
+              </div>
+
+              {item.modoIngreso === "existente" && (
+                <div className="space-y-2">
+                  <label className="block text-xs text-zinc-500">
+                    Selecciona el EPP existente
+                  </label>
+                  <select
+                    value={item.productoId || ""}
+                    onChange={(e) => applyCatalogoToItem(index, e.target.value)}
+                    className="input"
+                    disabled={catalogoLoading}
+                  >
+                    <option value="">
+                      {catalogoLoading
+                        ? "Cargando catálogo..."
+                        : "Selecciona un EPP existente"}
+                    </option>
+                    {catalogo.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {formatCatalogoLabel(row)}
+                      </option>
+                    ))}
+                  </select>
+                  {catalogoError ? (
+                    <div className="text-xs text-red-600">{catalogoError}</div>
+                  ) : null}
+                </div>
+              )}
+            </div>
             <select
               value={item.categoria}
               onChange={(e) => updateItem(index, "categoria", e.target.value)}
               className="input"
+              disabled={item.modoIngreso === "existente"}
             >
               <option value="">Categoría</option>
               {categorias.map((c) => (
@@ -769,6 +934,7 @@ return (
                 onChange={(e) =>
                   updateItem(index, "categoriaOtro", e.target.value)
                 }
+                disabled={item.modoIngreso === "existente"}
               />
             )}
 
@@ -778,6 +944,7 @@ return (
               onChange={(e) => updateItem(index, "epp", e.target.value)}
               className="input"
               placeholder="Nombre del EPP"
+              disabled={item.modoIngreso === "existente"}
             />
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -787,6 +954,7 @@ return (
                 onChange={(e) => updateItem(index, "marca", e.target.value)}
                 className="input"
                 placeholder="Marca (opcional)"
+                disabled={item.modoIngreso === "existente"}
               />
               <input
                 type="text"
@@ -794,6 +962,7 @@ return (
                 onChange={(e) => updateItem(index, "modelo", e.target.value)}
                 className="input"
                 placeholder="Modelo (opcional)"
+                disabled={item.modoIngreso === "existente"}
               />
             </div>
 
@@ -803,6 +972,7 @@ return (
               onChange={(e) => updateItem(index, "tallaNumero", e.target.value)}
               className="input"
               placeholder="Talla / Número (obligatorio, puedes usar No aplica)"
+              disabled={item.modoIngreso === "existente"}
             />
 
             <input
@@ -1061,16 +1231,18 @@ return (
                       </button>
                                              
                     <button
-                        type="button"
-                        onClick={() => {
+                      type="button"
+                      onClick={() => {
                         setOpenMenuId(null);
                         editarNombre(row);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
-                        role="menuitem"
-                        >
-                        📝 Editar nombre
-                        </button>
+                      }}
+                      disabled={row.anulado}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 disabled:opacity-40"
+                      role="menuitem"
+                      title={row.anulado ? "Bloqueado: ingreso anulado" : "Editar nombre"}
+                    >
+                      📝 Editar nombre
+                    </button>
 
                       <button
                         type="button"

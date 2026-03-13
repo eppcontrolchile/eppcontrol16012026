@@ -15,6 +15,7 @@ type Trabajador = {
 };
 
 type StockRow = {
+  producto_id: string;
   categoria: string;
   nombre: string;
   marca?: string | null;
@@ -25,6 +26,7 @@ type StockRow = {
 
 type EgresoItemUI = {
   categoria: string;
+  producto_id: string;
   // Composite key to uniquely identify stock rows by nombre + marca + modelo
   eppKey: string;
   // Display label (includes marca/modelo concatenated when available)
@@ -41,10 +43,13 @@ function formatMarcaModelo(marca?: string | null, modelo?: string | null) {
   return [marca, modelo].filter(Boolean).join(" - ");
 }
 
-function buildEppKey(nombre: string, marca?: string | null, modelo?: string | null) {
+function buildEppKey(
+  nombre: string,
+  marca?: string | null,
+  modelo?: string | null
+) {
   return [nombre ?? "", marca ?? "", modelo ?? ""].join("||");
 }
-
 
 function parseEppKey(key: string) {
   const [nombre, marca, modelo] = String(key ?? "").split("||");
@@ -55,11 +60,21 @@ function parseEppKey(key: string) {
   };
 }
 
-function splitNombreMarcaModelo(rawNombre: string, rawMarca?: any, rawModelo?: any) {
+function splitNombreMarcaModelo(
+  rawNombre: string,
+  rawMarca?: any,
+  rawModelo?: any
+) {
   const nombre0 = String(rawNombre ?? "").trim();
 
-  const marca0 = rawMarca == null || String(rawMarca).trim() === "" ? null : String(rawMarca).trim();
-  const modelo0 = rawModelo == null || String(rawModelo).trim() === "" ? null : String(rawModelo).trim();
+  const marca0 =
+    rawMarca == null || String(rawMarca).trim() === ""
+      ? null
+      : String(rawMarca).trim();
+  const modelo0 =
+    rawModelo == null || String(rawModelo).trim() === ""
+      ? null
+      : String(rawModelo).trim();
 
   // If API already provides marca/modelo, trust it.
   if (marca0 || modelo0) {
@@ -71,7 +86,10 @@ function splitNombreMarcaModelo(rawNombre: string, rawMarca?: any, rawModelo?: a
   if (m) {
     const nombre = String(m[1] ?? "").trim();
     const inner = String(m[2] ?? "").trim();
-    const parts = inner.split("-").map((p) => p.trim()).filter(Boolean);
+    const parts = inner
+      .split("-")
+      .map((p) => p.trim())
+      .filter(Boolean);
     const marca = parts[0] ?? null;
     const modelo = parts.length > 1 ? parts.slice(1).join(" - ") : null;
     return { nombre, marca, modelo };
@@ -98,6 +116,7 @@ export default function EgresoPage() {
   const [items, setItems] = useState<EgresoItemUI[]>([
     {
       categoria: "",
+      producto_id: "",
       eppKey: "",
       eppLabel: "",
       nombre_epp: "",
@@ -141,8 +160,12 @@ export default function EgresoPage() {
           return;
         }
 
-        const rol = String((usuario as any)?.rol ?? "").trim().toLowerCase();
-        const myCentro = (usuario as any)?.centro_id ? String((usuario as any).centro_id) : null;
+        const rol = String((usuario as any)?.rol ?? "")
+          .trim()
+          .toLowerCase();
+        const myCentro = (usuario as any)?.centro_id
+          ? String((usuario as any).centro_id)
+          : null;
         setMyRole(rol);
         setMyCentroId(myCentro);
 
@@ -172,13 +195,15 @@ export default function EgresoPage() {
           return;
         }
 
-        setTrabajadores((trabs as any[])?.map((t) => ({
-          id: t.id,
-          nombre: t.nombre,
-          rut: t.rut,
-          activo: t.activo,
-          centro_id: t.centro_id ?? null,
-        })) ?? []);
+        setTrabajadores(
+          (trabs as any[])?.map((t) => ({
+            id: t.id,
+            nombre: t.nombre,
+            rut: t.rut,
+            activo: t.activo,
+            centro_id: t.centro_id ?? null,
+          })) ?? []
+        );
 
         // Stock
         let mapped: StockRow[] = [];
@@ -193,7 +218,9 @@ export default function EgresoPage() {
 
           const { data: lotes, error: lotesErr } = await supabaseBrowser()
             .from("lotes_epp")
-            .select("categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id")
+            .select(
+              "producto_id,categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id"
+            )
             .eq("empresa_id", usuario.empresa_id)
             .eq("anulado", false)
             .eq("ubicacion_tipo", "centro")
@@ -211,16 +238,33 @@ export default function EgresoPage() {
           for (const r of (lotes as any[]) ?? []) {
             const categoria = String(r?.categoria ?? "");
             const nombre = String(r?.nombre_epp ?? "");
-            const marca = r?.marca == null || String(r.marca).trim() === "" ? null : String(r.marca).trim();
-            const modelo = r?.modelo == null || String(r.modelo).trim() === "" ? null : String(r.modelo).trim();
-            const talla = r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla).trim();
+            const marca =
+              r?.marca == null || String(r.marca).trim() === ""
+                ? null
+                : String(r.marca).trim();
+            const modelo =
+              r?.modelo == null || String(r.modelo).trim() === ""
+                ? null
+                : String(r.modelo).trim();
+            const talla =
+              r?.talla == null || String(r.talla).trim() === ""
+                ? null
+                : String(r.talla).trim();
             const qty = Number(r?.cantidad_disponible ?? 0);
             if (!Number.isFinite(qty) || qty <= 0) continue;
 
             const key = `${categoria}||${nombre}||${marca ?? ""}||${modelo ?? ""}||${talla ?? ""}`;
             const prev = agg.get(key);
             if (!prev) {
-              agg.set(key, { categoria, nombre, marca, modelo, talla, stock: qty });
+              agg.set(key, {
+                producto_id: String(r?.producto_id ?? ""),
+                categoria,
+                nombre,
+                marca,
+                modelo,
+                talla,
+                stock: qty,
+              });
             } else {
               prev.stock += qty;
             }
@@ -255,15 +299,21 @@ export default function EgresoPage() {
               r?.Model ??
               null;
 
-            const nombreRaw = String(r?.nombre ?? r?.nombre_epp ?? r?.nombreEpp ?? "");
+            const nombreRaw = String(
+              r?.nombre ?? r?.nombre_epp ?? r?.nombreEpp ?? ""
+            );
             const parsed = splitNombreMarcaModelo(nombreRaw, marca, modelo);
 
             return {
+              producto_id: String(r?.producto_id ?? ""),
               categoria: String(r?.categoria ?? ""),
               nombre: parsed.nombre,
               marca: parsed.marca,
               modelo: parsed.modelo,
-              talla: r?.talla == null || String(r.talla).trim() === "" ? null : String(r.talla),
+              talla:
+                r?.talla == null || String(r.talla).trim() === ""
+                  ? null
+                  : String(r.talla),
               stock: Number(r?.stock_total ?? r?.stock ?? 0),
             };
           });
@@ -283,14 +333,23 @@ export default function EgresoPage() {
   }, []);
 
   const categorias = useMemo(() => {
-    return Array.from(new Set(stock.map((s) => s.categoria))).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set(stock.map((s) => s.categoria))).sort((a, b) =>
+      a.localeCompare(b)
+    );
   }, [stock]);
 
   const eppsPorCategoria = useMemo(() => {
-    // Map categoria -> list of { key, nombre, marca, modelo, label }
+    // Map categoria -> list of { key, producto_id, nombre, marca, modelo, label }
     const map = new Map<
       string,
-      { key: string; nombre: string; marca: string | null; modelo: string | null; label: string }[]
+      {
+        key: string;
+        producto_id: string;
+        nombre: string;
+        marca: string | null;
+        modelo: string | null;
+        label: string;
+      }[]
     >();
 
     for (const s of stock) {
@@ -305,6 +364,7 @@ export default function EgresoPage() {
       if (!arr.some((x) => x.key === key)) {
         arr.push({
           key,
+          producto_id: s.producto_id,
           nombre: s.nombre,
           marca: s.marca ?? null,
           modelo: s.modelo ?? null,
@@ -316,7 +376,9 @@ export default function EgresoPage() {
     for (const [k, arr] of map.entries()) {
       map.set(
         k,
-        arr.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))
+        arr.sort((a, b) =>
+          a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+        )
       );
     }
 
@@ -336,7 +398,11 @@ export default function EgresoPage() {
     return Array.from(new Set(tallas)).sort((a, b) => a.localeCompare(b));
   };
 
-  const stockDisponiblePara = (categoria: string, eppKey: string, tallaNumero: string) => {
+  const stockDisponiblePara = (
+    categoria: string,
+    eppKey: string,
+    tallaNumero: string
+  ) => {
     const { nombre, marca, modelo } = parseEppKey(eppKey);
     const tallaKey = !tallaNumero || tallaNumero === "No aplica" ? null : tallaNumero;
     const row = stock.find(
@@ -363,6 +429,7 @@ export default function EgresoPage() {
       ...prev,
       {
         categoria: "",
+        producto_id: "",
         eppKey: "",
         eppLabel: "",
         nombre_epp: "",
@@ -512,14 +579,22 @@ export default function EgresoPage() {
     }
 
     for (const item of items) {
-      if (!item.categoria || !item.eppKey || !item.tallaNumero || item.cantidad <= 0) {
+      if (
+        !item.categoria ||
+        !item.producto_id ||
+        !item.eppKey ||
+        !item.tallaNumero ||
+        item.cantidad <= 0
+      ) {
         setError("Completa correctamente todos los EPP");
         return;
       }
       const disp = stockDisponiblePara(item.categoria, item.eppKey, item.tallaNumero);
       if (item.cantidad > disp) {
         const show = item.eppLabel || item.nombre_epp || "EPP";
-        setError(`Cantidad supera stock disponible (${disp}) para ${show} (${item.tallaNumero}).`);
+        setError(
+          `Cantidad supera stock disponible (${disp}) para ${show} (${item.tallaNumero}).`
+        );
         return;
       }
     }
@@ -551,12 +626,16 @@ export default function EgresoPage() {
         centro_id: trabajadorSeleccionado.centro_id,
         firma_url: canvasRef.current?.toDataURL() || null,
         items: items.map((i) => ({
+          producto_id: i.producto_id,
+          cantidad: Number(i.cantidad),
           categoria: i.categoria,
           nombre_epp: i.nombre_epp,
           marca: i.marca ?? null,
           modelo: i.modelo ?? null,
-          talla: i.tallaNumero === "No aplica" || i.tallaNumero === "" ? null : i.tallaNumero,
-          cantidad: Number(i.cantidad),
+          talla:
+            i.tallaNumero === "No aplica" || i.tallaNumero === ""
+              ? null
+              : i.tallaNumero,
         })),
       };
 
@@ -641,9 +720,13 @@ export default function EgresoPage() {
           </div>
 
           {items.map((it, idx) => {
-            const epps = it.categoria ? (eppsPorCategoria.get(it.categoria) ?? []) : [];
-            const tallas = it.categoria && it.eppKey ? tallasPara(it.categoria, it.eppKey) : [];
-            const disp = it.categoria && it.eppKey && it.tallaNumero ? stockDisponiblePara(it.categoria, it.eppKey, it.tallaNumero) : 0;
+            const epps = it.categoria ? eppsPorCategoria.get(it.categoria) ?? [] : [];
+            const tallas =
+              it.categoria && it.eppKey ? tallasPara(it.categoria, it.eppKey) : [];
+            const disp =
+              it.categoria && it.eppKey && it.tallaNumero
+                ? stockDisponiblePara(it.categoria, it.eppKey, it.tallaNumero)
+                : 0;
 
             return (
               <div key={idx} className="rounded border p-3 space-y-2">
@@ -654,6 +737,7 @@ export default function EgresoPage() {
                     onChange={(e) => {
                       updateItem(idx, {
                         categoria: e.target.value,
+                        producto_id: "",
                         eppKey: "",
                         eppLabel: "",
                         nombre_epp: "",
@@ -665,7 +749,9 @@ export default function EgresoPage() {
                   >
                     <option value="">Categoría…</option>
                     {categorias.map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
                     ))}
                   </select>
 
@@ -679,6 +765,7 @@ export default function EgresoPage() {
                       // Find the label from options (fallback to nombre)
                       const opt = epps.find((o) => o.key === nextKey);
                       updateItem(idx, {
+                        producto_id: (opt as any)?.producto_id ?? "",
                         eppKey: nextKey,
                         eppLabel: opt?.label ?? meta.nombre,
                         nombre_epp: meta.nombre,
@@ -704,7 +791,9 @@ export default function EgresoPage() {
                   >
                     <option value="">Talla/Número…</option>
                     {tallas.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
                     ))}
                   </select>
 
@@ -725,7 +814,9 @@ export default function EgresoPage() {
                 )}
 
                 <div className="flex items-center justify-between text-xs text-zinc-600">
-                  <span>Stock disponible: <b>{disp}</b></span>
+                  <span>
+                    Stock disponible: <b>{disp}</b>
+                  </span>
                   {items.length > 1 && (
                     <button
                       type="button"
@@ -748,7 +839,11 @@ export default function EgresoPage() {
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">3) Firma del trabajador</h2>
-            <button type="button" onClick={clearFirma} className="rounded border px-3 py-1 text-sm">
+            <button
+              type="button"
+              onClick={clearFirma}
+              className="rounded border px-3 py-1 text-sm"
+            >
               Limpiar
             </button>
           </div>
