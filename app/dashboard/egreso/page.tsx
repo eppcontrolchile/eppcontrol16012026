@@ -22,6 +22,9 @@ type StockRow = {
   modelo?: string | null;
   talla: string | null;
   stock: number;
+  origen_tipo: "global" | "centro";
+  origen_centro_id: string | null;
+  origen_label: string;
 };
 
 type EgresoItemUI = {
@@ -104,6 +107,9 @@ export default function EgresoPage() {
   const [trabajadorId, setTrabajadorId] = useState<string>("");
 
   const [stock, setStock] = useState<StockRow[]>([]);
+  const [centrosFuente, setCentrosFuente] = useState<Array<{ id: string; nombre: string }>>([]);
+  const [sourceMode, setSourceMode] = useState<"global" | "centro">("global");
+  const [sourceCentroId, setSourceCentroId] = useState<string>("");
 
   const [myRole, setMyRole] = useState<string>("");
   const [myCentroId, setMyCentroId] = useState<string | null>(null);
@@ -163,6 +169,31 @@ export default function EgresoPage() {
 
         setMyRole(rol);
         setMyCentroId(myCentro);
+
+        if (rol === "admin" || rol === "jefe_area") {
+          const { data: centrosData, error: centrosErr } = await supabaseBrowser()
+            .from("centros_trabajo")
+            .select("id,nombre")
+            .eq("empresa_id", usuario.empresa_id)
+            .order("nombre", { ascending: true });
+
+          if (centrosErr) {
+            setError(centrosErr.message);
+            setLoading(false);
+            return;
+          }
+
+          setCentrosFuente(
+            ((centrosData as any[]) ?? []).map((c) => ({
+              id: String(c.id),
+              nombre: String(c.nombre ?? ""),
+            }))
+          );
+        } else {
+          setCentrosFuente([]);
+          setSourceMode("global");
+          setSourceCentroId("");
+        }
 
         let trabQuery = supabaseBrowser()
           .from("trabajadores")
@@ -254,6 +285,9 @@ export default function EgresoPage() {
                 modelo,
                 talla,
                 stock: qty,
+                origen_tipo: "centro",
+                origen_centro_id: myCentro,
+                origen_label: "Centro de trabajo",
               });
             } else {
               prev.stock += qty;
@@ -262,7 +296,14 @@ export default function EgresoPage() {
 
           mapped = Array.from(agg.values());
         } else {
-          const stockResp = await fetch("/api/stock", { cache: "no-store" });
+          const scope =
+            sourceMode === "centro" && sourceCentroId
+              ? `centros&centro_id=${encodeURIComponent(sourceCentroId)}`
+              : "global";
+
+          const stockResp = await fetch(`/api/stock?scope=${scope}`, {
+            cache: "no-store",
+          });
           if (!stockResp.ok) {
             setError("No se pudo cargar el stock.");
             setLoading(false);
@@ -303,7 +344,19 @@ export default function EgresoPage() {
                   ? null
                   : String(r.talla),
               stock: Number(r?.stock_total ?? r?.stock ?? 0),
-            };
+              origen_tipo:
+                r?.centro_id != null && String(r.centro_id).trim() !== ""
+                  ? "centro"
+                  : "global",
+              origen_centro_id:
+                r?.centro_id != null && String(r.centro_id).trim() !== ""
+                  ? String(r.centro_id)
+                  : null,
+              origen_label:
+                r?.centro_nombre != null && String(r.centro_nombre).trim() !== ""
+                  ? String(r.centro_nombre)
+                  : "Bodega empresa",
+            } as StockRow;
           });
         }
 
@@ -317,7 +370,7 @@ export default function EgresoPage() {
     };
 
     load();
-  }, []);
+  }, [sourceMode, sourceCentroId]);
 
   const categorias = useMemo(() => {
     return Array.from(new Set(stock.map((s) => s.categoria))).sort((a, b) =>
@@ -572,6 +625,18 @@ export default function EgresoPage() {
       }
     }
 
+    if ((myRole === "admin" || myRole === "jefe_area") && sourceMode === "centro") {
+      if (!sourceCentroId) {
+        setError("Debes seleccionar el centro desde donde se descontará el stock.");
+        return;
+      }
+
+      if (String(trabajadorSeleccionado.centro_id) !== String(sourceCentroId)) {
+        setError("El trabajador debe pertenecer al centro desde donde se descontará el stock.");
+        return;
+      }
+    }
+
     if (!firmado) {
       setError("La entrega debe ser firmada");
       return;
@@ -631,6 +696,12 @@ export default function EgresoPage() {
         usuario_id: usuario.id,
         trabajador_id: trabajadorId,
         centro_id: trabajadorSeleccionado.centro_id,
+        from_centro_id:
+          myRole === "admin" || myRole === "jefe_area"
+            ? sourceMode === "centro"
+              ? sourceCentroId
+              : null
+            : null,
         firma_url: canvasRef.current?.toDataURL() || null,
         items: items.map((i) => ({
           producto_id: i.producto_id,
@@ -716,9 +787,69 @@ export default function EgresoPage() {
           )}
         </div>
 
+        {(myRole === "admin" || myRole === "jefe_area") && (
+          <div className="rounded-lg border bg-white p-4 space-y-3">
+            <h2 className="font-medium">2) Origen del stock</h2>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  setSourceMode("global");
+                  setSourceCentroId("");
+                }}
+                className={
+                  sourceMode === "global"
+                    ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                    : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+                }
+              >
+                Bodega empresa (stock global)
+              </button>
+
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setSourceMode("centro")}
+                className={
+                  sourceMode === "centro"
+                    ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                    : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+                }
+              >
+                Stock asignado a un centro
+              </button>
+            </div>
+
+            {sourceMode === "centro" && (
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">
+                  Centro desde donde se descontará el stock
+                </label>
+                <select
+                  className="input"
+                  value={sourceCentroId}
+                  disabled={submitting}
+                  onChange={(e) => setSourceCentroId(e.target.value)}
+                >
+                  <option value="">Selecciona centro…</option>
+                  {centrosFuente.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-medium">2) EPP a entregar</h2>
+            <h2 className="font-medium">
+              {(myRole === "admin" || myRole === "jefe_area") ? "3) EPP a entregar" : "2) EPP a entregar"}
+            </h2>
             <button
               type="button"
               onClick={addItem}
@@ -834,6 +965,14 @@ export default function EgresoPage() {
                 <div className="flex items-center justify-between text-xs text-zinc-600">
                   <span>
                     Stock disponible: <b>{disp}</b>
+                    {it.producto_id
+                      ? (() => {
+                          const stockRow = stock.find(
+                            (s) => s.producto_id === it.producto_id && (s.talla ?? "No aplica") === (it.tallaNumero || "No aplica")
+                          );
+                          return stockRow ? ` · Origen: ${stockRow.origen_label}` : "";
+                        })()
+                      : ""}
                   </span>
                   {items.length > 1 && (
                     <button
@@ -857,7 +996,9 @@ export default function EgresoPage() {
 
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-medium">3) Firma del trabajador</h2>
+            <h2 className="font-medium">
+              {(myRole === "admin" || myRole === "jefe_area") ? "4) Firma del trabajador" : "3) Firma del trabajador"}
+            </h2>
             <button
               type="button"
               onClick={clearFirma}

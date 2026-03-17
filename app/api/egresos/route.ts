@@ -187,6 +187,7 @@ export async function POST(req: NextRequest) {
       rol === "admin" ||
       rol === "bodega" ||
       rol === "jefe_area" ||
+      rol === "solo_entrega" ||
       rol === "supervisor_terreno" ||
       rol === "superadmin";
 
@@ -202,10 +203,11 @@ export async function POST(req: NextRequest) {
 
     const usuario_id = String(usuarioRow.id);
 
-    const { trabajador_id, centro_id, firma_url, items } = body;
+    const { trabajador_id, centro_id, from_centro_id, firma_url, items } = body;
 
     const trabajadorId = String(trabajador_id ?? "").trim();
     const centroOperativoId = String(centro_id ?? "").trim();
+    const requestedFromCentroId = String(from_centro_id ?? "").trim();
 
     // Determinar fuente real de descuento según rol
     let fromCentroId: string | null = null;
@@ -219,9 +221,41 @@ export async function POST(req: NextRequest) {
       }
 
       fromCentroId = String(usuarioRow.centro_id);
-    } else {
-      // Todos los demás descuentan desde Inventario Empresa (global)
+    } else if (rol === "bodega" || rol === "solo_entrega") {
+      // Siempre descuentan desde Inventario Empresa (global)
       fromCentroId = null;
+    } else if (rol === "admin" || rol === "jefe_area" || rol === "superadmin") {
+      // Pueden elegir entre global (null) o stock asignado a un CT
+      if (requestedFromCentroId) {
+        if (!isUuid(requestedFromCentroId)) {
+          return NextResponse.json(
+            { error: "Centro de origen inválido" },
+            { status: 400 }
+          );
+        }
+
+        const { data: fromCentroRow, error: fromCentroErr } = await supabase
+          .from("centros_trabajo")
+          .select("id")
+          .eq("empresa_id", empresa_id)
+          .eq("id", requestedFromCentroId)
+          .maybeSingle();
+
+        if (fromCentroErr) {
+          return NextResponse.json({ error: fromCentroErr.message }, { status: 500 });
+        }
+
+        if (!fromCentroRow?.id) {
+          return NextResponse.json(
+            { error: "Centro de origen no encontrado" },
+            { status: 404 }
+          );
+        }
+
+        fromCentroId = requestedFromCentroId;
+      } else {
+        fromCentroId = null;
+      }
     }
 
     // Supervisor terreno: solo puede operar (ver/entregar) dentro de su propio Centro de Trabajo
@@ -256,6 +290,36 @@ export async function POST(req: NextRequest) {
       if (!trabajadorCentroId || trabajadorCentroId !== supervisorCentroId) {
         return NextResponse.json(
           { error: "Trabajador fuera del Centro del supervisor" },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Admin / Jefe de área / Superadmin: si eligen entregar desde stock de CT,
+    // validamos que el trabajador pertenezca a ese mismo CT para mantener coherencia operacional.
+    if (
+      (rol === "admin" || rol === "jefe_area" || rol === "superadmin") &&
+      fromCentroId
+    ) {
+      const { data: trabRow, error: trabErr } = await supabase
+        .from("trabajadores")
+        .select("id, centro_id")
+        .eq("empresa_id", empresa_id)
+        .eq("id", trabajadorId)
+        .maybeSingle();
+
+      if (trabErr) {
+        return NextResponse.json({ error: trabErr.message }, { status: 500 });
+      }
+
+      if (!trabRow?.id) {
+        return NextResponse.json({ error: "Trabajador no encontrado" }, { status: 404 });
+      }
+
+      const trabajadorCentroId = String((trabRow as any).centro_id ?? "").trim();
+      if (!trabajadorCentroId || trabajadorCentroId !== fromCentroId) {
+        return NextResponse.json(
+          { error: "El trabajador no pertenece al centro desde donde se descontará el stock" },
           { status: 403 }
         );
       }

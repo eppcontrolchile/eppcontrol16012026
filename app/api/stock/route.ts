@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
     // Parse query param: scope
     const scope = String(req.nextUrl?.searchParams?.get("scope") ?? "").trim().toLowerCase();
     const scopeIsCentros = scope === "centros";
+    const centroIdParam = String(req.nextUrl?.searchParams?.get("centro_id") ?? "").trim();
 
     // 1) Auth por cookie session
     const cookieStore = await cookies();
@@ -138,7 +139,7 @@ export async function GET(req: NextRequest) {
 
     let lots: any[] | null = null;
     if (scopeIsCentros) {
-      const { data: lotsCentro, error: lotsCentroErr } = await admin
+      let lotsCentroQuery = admin
         .from("lotes_epp")
         .select(
           "producto_id,categoria,nombre_epp,talla,marca,modelo,cantidad_disponible,ubicacion_tipo,centro_id,centros_trabajo:centro_id(nombre)"
@@ -149,8 +150,37 @@ export async function GET(req: NextRequest) {
         .eq("ubicacion_tipo", "centro")
         .not("centro_id", "is", null);
 
+      if (centroIdParam) {
+        lotsCentroQuery = lotsCentroQuery.eq("centro_id", centroIdParam);
+      }
+
+      const { data: lotsCentro, error: lotsCentroErr } = await lotsCentroQuery;
+
       if (lotsCentroErr) {
         return NextResponse.json({ error: lotsCentroErr.message }, { status: 500 });
+      }
+
+      if (centroIdParam) {
+        const centroExiste = (lotsCentro ?? []).some(
+          (r: any) => String((r as any).centro_id ?? "").trim() === centroIdParam
+        );
+
+        if (!centroExiste) {
+          const { data: centroRow, error: centroErr } = await admin
+            .from("centros_trabajo")
+            .select("id")
+            .eq("empresa_id", empresaId)
+            .eq("id", centroIdParam)
+            .maybeSingle();
+
+          if (centroErr) {
+            return NextResponse.json({ error: centroErr.message }, { status: 500 });
+          }
+
+          if (!centroRow?.id) {
+            return NextResponse.json({ error: "Centro no encontrado" }, { status: 404 });
+          }
+        }
       }
 
       // 4) Agregación por centro + producto
