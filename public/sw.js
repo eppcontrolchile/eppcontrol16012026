@@ -1,19 +1,18 @@
 // public/sw.js
 // 🔁 IMPORTANT: bump this version on each deploy that changes frontend bundles/UI.
 // This forces a new cache namespace and guarantees old cached assets are deleted on activate.
-const SW_VERSION = "v4";
+const SW_VERSION = "v5";
 const CACHE = `epp-entregas-${SW_VERSION}`;
 
-// Solo assets estáticos (NO HTML)
+// Solo assets estáticos propios (NO HTML, NO /_next)
 const CORE_ASSETS = [
-  "/manifest.webmanifest", // si tu Next lo expone así; si no existe, no pasa nada
+  "/manifest.webmanifest",
   "/pwa/icon-192.png",
   "/pwa/icon-512.png",
   "/pwa/icon-maskable-192.png",
   "/pwa/icon-maskable-512.png",
 ];
 
-// Permite forzar activación del SW nuevo desde el cliente
 self.addEventListener("message", (event) => {
   if (event?.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
@@ -34,45 +33,51 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.map((k) => (k !== CACHE ? caches.delete(k) : null))))
-      .then(() => self.clients.claim())
+      .then(async () => {
+        await self.clients.claim();
+
+        const clients = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+
+        for (const client of clients) {
+          client.postMessage({ type: "SW_UPDATED", version: SW_VERSION });
+        }
+      })
   );
 });
 
-// Estrategia:
-// - Navegación (HTML): NETWORK ONLY (sin cache) + fallback a /m/entrega con redirect si estás offline
-// - API: NETWORK ONLY (sin cache)
-// - Assets (_next/static, imágenes, etc): cache-first con actualización al vuelo
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Solo mismo origen
   if (url.origin !== self.location.origin) return;
 
-  // No interceptar requests que no sean GET (evita comportamientos raros con POST/PUT, etc.)
   if (req.method !== "GET") {
     event.respondWith(fetch(req));
     return;
   }
 
-  // ⚠️ IMPORTANTE: NO cachear assets de Next (_next). Los nombres pueden ser estables en algunos casos
-  // y la PWA puede quedar pegada con bundles viejos (problema típico en mobile).
-  if (url.pathname.startsWith("/_next/")) {
-    event.respondWith(fetch(req));
+  // Nunca cachear assets/versionado de Next ni RSC/data routes.
+  if (
+    url.pathname.startsWith("/_next/") ||
+    url.pathname.startsWith("/_vercel/")
+  ) {
+    event.respondWith(fetch(req, { cache: "no-store" }));
     return;
   }
 
-  // 1) API: red siempre (sin cache)
+  // Nunca cachear API.
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(req));
+    event.respondWith(fetch(req, { cache: "no-store" }));
     return;
   }
 
-  // 2) Navegaciones: NO cachear HTML (evita “pantallas fantasma”)
+  // HTML/navegación: siempre red. Sin caché de páginas.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(() => {
-        // Offline: evita redirect-loop. Muestra una pantalla mínima.
+      fetch(req, { cache: "no-store" }).catch(() => {
         const html = `<!doctype html>
 <html lang="es">
 <head>
@@ -110,17 +115,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3) Assets (no-_next): cache-first + refresh
+  // Assets públicos propios: cache-first + refresh, evitando HTML por accidente.
   event.respondWith(
     caches.match(req).then((cached) => {
       const fetchAndUpdate = fetch(req)
         .then((res) => {
-          // Solo cachea respuestas OK, same-origin (type: basic) y GET
-          // y evita cachear HTML por accidente.
           const ct = res?.headers?.get("content-type") || "";
           const isHtml = ct.includes("text/html");
 
-          if (req.method === "GET" && res && res.ok && res.type === "basic" && !isHtml) {
+          if (res && res.ok && res.type === "basic" && !isHtml) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           }
@@ -128,7 +131,6 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() => cached);
 
-      // Si hay cache, úsalo rápido y actualiza en background
       return cached || fetchAndUpdate;
     })
   );
