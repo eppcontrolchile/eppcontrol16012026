@@ -209,6 +209,19 @@ export async function POST(req: NextRequest) {
     const centroOperativoId = String(centro_id ?? "").trim();
     const requestedFromCentroId = String(from_centro_id ?? "").trim();
 
+    if (!trabajadorId || !isUuid(trabajadorId)) {
+      return NextResponse.json({ error: "Trabajador inválido" }, { status: 400 });
+    }
+
+    if (!centroOperativoId || !isUuid(centroOperativoId)) {
+      return NextResponse.json(
+        { error: "Centro de trabajo destino inválido" },
+        { status: 400 }
+      );
+    }
+
+    // centro_id = centro destino (CT del trabajador)
+    // from_centro_id = centro origen del stock (null = bodega empresa)
     // Determinar fuente real de descuento según rol
     let fromCentroId: string | null = null;
 
@@ -225,7 +238,8 @@ export async function POST(req: NextRequest) {
       // Siempre descuentan desde Inventario Empresa (global)
       fromCentroId = null;
     } else if (rol === "admin" || rol === "jefe_area" || rol === "superadmin") {
-      // Pueden elegir entre global (null) o stock asignado a un CT
+      // Pueden elegir entre global (null) o stock asignado a un CT.
+      // No se exige que el centro origen coincida con el centro destino.
       if (requestedFromCentroId) {
         if (!isUuid(requestedFromCentroId)) {
           return NextResponse.json(
@@ -258,84 +272,48 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Supervisor terreno: solo puede operar (ver/entregar) dentro de su propio Centro de Trabajo
-    if (rol === "supervisor_terreno") {
-      const supervisorCentroId = String(usuarioRow.centro_id ?? "").trim();
+    // Validar trabajador y centro destino.
+    // Nueva regla: el supervisor puede entregar a trabajadores de otro CT destino;
+    // lo único fijo para supervisor es el centro origen del stock.
+    const { data: trabRow, error: trabErr } = await supabase
+      .from("trabajadores")
+      .select("id, centro_id, activo")
+      .eq("empresa_id", empresa_id)
+      .eq("id", trabajadorId)
+      .maybeSingle();
 
-      // El centro operativo de la entrega debe ser su mismo CT
-      if (!supervisorCentroId || centroOperativoId !== supervisorCentroId) {
-        return NextResponse.json(
-          { error: "Supervisor solo puede operar en su Centro de Trabajo" },
-          { status: 403 }
-        );
-      }
-
-      // El trabajador debe pertenecer a ese mismo CT (trazabilidad y control)
-      const { data: trabRow, error: trabErr } = await supabase
-        .from("trabajadores")
-        .select("id, centro_id")
-        .eq("empresa_id", empresa_id)
-        .eq("id", trabajadorId)
-        .maybeSingle();
-
-      if (trabErr) {
-        return NextResponse.json({ error: trabErr.message }, { status: 500 });
-      }
-
-      if (!trabRow?.id) {
-        return NextResponse.json({ error: "Trabajador no encontrado" }, { status: 404 });
-      }
-
-      const trabajadorCentroId = String((trabRow as any).centro_id ?? "").trim();
-      if (!trabajadorCentroId || trabajadorCentroId !== supervisorCentroId) {
-        return NextResponse.json(
-          { error: "Trabajador fuera del Centro del supervisor" },
-          { status: 403 }
-        );
-      }
+    if (trabErr) {
+      return NextResponse.json({ error: trabErr.message }, { status: 500 });
     }
 
-    // Admin / Jefe de área / Superadmin: si eligen entregar desde stock de CT,
-    // validamos que el trabajador pertenezca a ese mismo CT para mantener coherencia operacional.
-    if (
-      (rol === "admin" || rol === "jefe_area" || rol === "superadmin") &&
-      fromCentroId
-    ) {
-      const { data: trabRow, error: trabErr } = await supabase
-        .from("trabajadores")
-        .select("id, centro_id")
-        .eq("empresa_id", empresa_id)
-        .eq("id", trabajadorId)
-        .maybeSingle();
-
-      if (trabErr) {
-        return NextResponse.json({ error: trabErr.message }, { status: 500 });
-      }
-
-      if (!trabRow?.id) {
-        return NextResponse.json({ error: "Trabajador no encontrado" }, { status: 404 });
-      }
-
-      const trabajadorCentroId = String((trabRow as any).centro_id ?? "").trim();
-      if (!trabajadorCentroId || trabajadorCentroId !== fromCentroId) {
-        return NextResponse.json(
-          { error: "El trabajador no pertenece al centro desde donde se descontará el stock" },
-          { status: 403 }
-        );
-      }
+    if (!trabRow?.id) {
+      return NextResponse.json({ error: "Trabajador no encontrado" }, { status: 404 });
     }
+
+    if ((trabRow as any).activo === false) {
+      return NextResponse.json({ error: "Trabajador inactivo" }, { status: 403 });
+    }
+
+    const trabajadorCentroId = String((trabRow as any).centro_id ?? "").trim();
+    if (!trabajadorCentroId) {
+      return NextResponse.json(
+        { error: "El trabajador no tiene centro de trabajo asignado" },
+        { status: 400 }
+      );
+    }
+
+    if (trabajadorCentroId !== centroOperativoId) {
+      return NextResponse.json(
+        { error: "El trabajador no pertenece al centro de trabajo destino seleccionado" },
+        { status: 403 }
+      );
+    }
+
 
     // ─────────────────────────────────────────────
     // 1️⃣ Validaciones mínimas
     // ─────────────────────────────────────────────
-    if (
-      !empresa_id ||
-      !usuario_id ||
-      !trabajadorId ||
-      !centroOperativoId ||
-      !Array.isArray(items) ||
-      items.length === 0
-    ) {
+    if (!empresa_id || !usuario_id || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
         { error: "Payload incompleto" },
         { status: 400 }
