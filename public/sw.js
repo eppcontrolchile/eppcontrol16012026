@@ -1,7 +1,7 @@
 // public/sw.js
 // 🔁 IMPORTANT: bump this version on each deploy that changes frontend bundles/UI.
 // This forces a new cache namespace and guarantees old cached assets are deleted on activate.
-const SW_VERSION = "v5";
+const SW_VERSION = "v6";
 const CACHE = `epp-entregas-${SW_VERSION}`;
 
 // Solo assets estáticos propios (NO HTML, NO /_next)
