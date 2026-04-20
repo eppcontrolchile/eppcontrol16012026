@@ -4,11 +4,11 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    id: "/m-entregas",
+    id: "/m",
     name: "EPP Entregas",
     short_name: "Entregas",
     description: "App operativa para registrar entregas de EPP.",
-    start_url: "/m/entrega",
+    start_url: "/m",
     scope: "/m/",
     display: "standalone",
     background_color: "#ffffff",

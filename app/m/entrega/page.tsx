@@ -2,6 +2,7 @@
 "use client";
 
 import type React from "react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
@@ -99,6 +100,10 @@ export default function EntregaPage() {
   const [rol, setRol] = useState<string | null>(null);
   const [centros, setCentros] = useState<CentroTrabajo[]>([]);
   const [myCentroId, setMyCentroId] = useState<string | null>(null);
+
+  const canMoveStock = useMemo(() => {
+    return rol === "admin" || rol === "bodega" || rol === "superadmin";
+  }, [rol]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -704,11 +709,30 @@ export default function EntregaPage() {
 
   return (
     <div className="mx-auto max-w-md space-y-6 px-4 py-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Entrega de EPP</h1>
-        <p className="text-sm text-zinc-500">
-          Selecciona centro destino, luego trabajador, confirma EPP desde stock, firma y registra.
-        </p>
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Entrega de EPP</h1>
+            <p className="text-sm text-zinc-500">
+              Selecciona centro destino, luego trabajador, confirma EPP desde stock, firma y registra.
+            </p>
+          </div>
+          <Link
+            href="/m"
+            className="shrink-0 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Operaciones
+          </Link>
+        </div>
+
+        {canMoveStock && (
+          <Link
+            href="/m/mover-stock"
+            className="block rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-center text-sm font-medium text-sky-700 hover:bg-sky-100"
+          >
+            Ir a mover stock
+          </Link>
+        )}
       </div>
 
       <SuccessModal
