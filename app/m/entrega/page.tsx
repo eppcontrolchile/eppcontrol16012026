@@ -72,9 +72,10 @@ export default function EntregaPage() {
 
   const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
   const [trabajadorId, setTrabajadorId] = useState<string>("");
+  const [centroDestinoId, setCentroDestinoId] = useState<string>("");
 
   const [stock, setStock] = useState<StockRow[]>([]);
-  const [centrosFuente, setCentrosFuente] = useState<Array<{ id: string; nombre: string }>>([]);
+  const [centrosFuente, setCentrosFuente] = useState<CentroTrabajo[]>([]);
   const [sourceMode, setSourceMode] = useState<"global" | "centro">("global");
   const [sourceCentroId, setSourceCentroId] = useState<string>("");
 
@@ -97,6 +98,7 @@ export default function EntregaPage() {
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [rol, setRol] = useState<string | null>(null);
   const [centros, setCentros] = useState<CentroTrabajo[]>([]);
+  const [myCentroId, setMyCentroId] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -159,7 +161,7 @@ export default function EntregaPage() {
 
         const { data: usuario, error: usuarioError } = await supabaseBrowser()
           .from("usuarios")
-          .select("id, empresa_id, rol, activo")
+          .select("id, empresa_id, rol, activo, centro_id")
           .eq("auth_user_id", authData.user.id)
           .maybeSingle();
 
@@ -193,29 +195,43 @@ export default function EntregaPage() {
         setUsuarioId(String(usuario.id));
         setEmpresaId(String(usuario.empresa_id));
         setRol(userRole);
+        const userCentroId = usuario?.centro_id ? String(usuario.centro_id) : null;
+        setMyCentroId(userCentroId);
 
-        if (userRole === "admin" || userRole === "jefe_area" || userRole === "superadmin") {
-          const { data: centrosFuenteData, error: centrosFuenteErr } = await supabaseBrowser()
-            .from("centros_trabajo")
-            .select("id,nombre")
-            .eq("empresa_id", usuario.empresa_id)
-            .eq("activo", true)
-            .order("nombre", { ascending: true });
+        const { data: centrosFuenteData, error: centrosFuenteErr } = await supabaseBrowser()
+          .from("centros_trabajo")
+          .select("id,nombre")
+          .eq("empresa_id", usuario.empresa_id)
+          .eq("activo", true)
+          .order("nombre", { ascending: true });
 
-          if (centrosFuenteErr) {
-            setError(centrosFuenteErr.message);
+        if (centrosFuenteErr) {
+          setError(centrosFuenteErr.message);
+          setLoading(false);
+          return;
+        }
+
+        const centrosActivos: CentroTrabajo[] = ((centrosFuenteData as any[]) ?? []).map((c) => ({
+          id: String(c.id),
+          nombre: String(c.nombre ?? ""),
+        }));
+
+        setCentrosFuente(centrosActivos);
+        setCentros(centrosActivos);
+
+        if (userRole === "supervisor_terreno") {
+          if (!userCentroId) {
+            setError("Supervisor sin centro asignado.");
             setLoading(false);
             return;
           }
-
-          setCentrosFuente(
-            ((centrosFuenteData as any[]) ?? []).map((c) => ({
-              id: String(c.id),
-              nombre: String(c.nombre ?? ""),
-            }))
-          );
-        } else {
-          setCentrosFuente([]);
+          setSourceMode("centro");
+          setSourceCentroId(userCentroId);
+        } else if (
+          userRole !== "admin" &&
+          userRole !== "jefe_area" &&
+          userRole !== "superadmin"
+        ) {
           setSourceMode("global");
           setSourceCentroId("");
         }
@@ -243,20 +259,6 @@ export default function EntregaPage() {
           })) ?? []
         );
 
-        const { data: centrosDB, error: centrosErr } = await supabaseBrowser()
-          .from("centros_trabajo")
-          .select("id,nombre")
-          .eq("empresa_id", usuario.empresa_id)
-          .eq("activo", true)
-          .order("nombre", { ascending: true });
-
-        if (centrosErr) {
-          setError(centrosErr.message);
-          setLoading(false);
-          return;
-        }
-
-        setCentros((centrosDB as any[])?.map((c) => ({ id: c.id, nombre: c.nombre })) ?? []);
 
         await fetchStockSafe();
 
@@ -364,11 +366,21 @@ export default function EntregaPage() {
     return trabajadores.find((t) => t.id === trabajadorId) ?? null;
   }, [trabajadores, trabajadorId]);
 
-  const centroNombre = useMemo(() => {
-    const cid = trabajadorSeleccionado?.centro_id;
-    if (!cid) return "—";
-    return centros.find((c) => c.id === cid)?.nombre ?? "—";
-  }, [centros, trabajadorSeleccionado]);
+  const trabajadoresFiltrados = useMemo(() => {
+    if (!centroDestinoId) return [];
+    return trabajadores.filter(
+      (t) => String(t.centro_id ?? "") === String(centroDestinoId)
+    );
+  }, [trabajadores, centroDestinoId]);
+
+  const centroDestinoNombre = useMemo(() => {
+    if (!centroDestinoId) return "—";
+    return centros.find((c) => c.id === centroDestinoId)?.nombre ?? "—";
+  }, [centros, centroDestinoId]);
+
+  useEffect(() => {
+    setTrabajadorId("");
+  }, [centroDestinoId]);
 
   const updateItem = (index: number, patch: Partial<EgresoItemUI>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
@@ -549,6 +561,11 @@ export default function EntregaPage() {
 
     if (submitting) return;
 
+    if (!centroDestinoId) {
+      setError("Selecciona un centro de trabajo destino");
+      return;
+    }
+
     if (!trabajadorId) {
       setError("Selecciona un trabajador");
       return;
@@ -564,16 +581,19 @@ export default function EntregaPage() {
       return;
     }
 
-    if ((rol === "admin" || rol === "jefe_area" || rol === "superadmin") && sourceMode === "centro") {
-      if (!sourceCentroId) {
-        setError("Debes seleccionar el centro desde donde se descontará el stock.");
-        return;
-      }
+    if (String(trabajadorSeleccionado.centro_id ?? "") !== String(centroDestinoId)) {
+      setError("El trabajador no pertenece al centro de trabajo destino seleccionado.");
+      return;
+    }
 
-      if (String(trabajadorSeleccionado.centro_id) !== String(sourceCentroId)) {
-        setError("El trabajador debe pertenecer al centro desde donde se descontará el stock.");
-        return;
-      }
+    if (rol === "supervisor_terreno" && !myCentroId) {
+      setError("Supervisor sin centro asignado");
+      return;
+    }
+
+    if ((rol === "admin" || rol === "jefe_area" || rol === "superadmin") && sourceMode === "centro" && !sourceCentroId) {
+      setError("Debes seleccionar el centro desde donde se descontará el stock.");
+      return;
     }
 
     if (!firmado) {
@@ -610,13 +630,15 @@ export default function EntregaPage() {
         empresa_id: empresaId,
         usuario_id: usuarioId,
         trabajador_id: trabajadorId,
-        centro_id: trabajadorSeleccionado.centro_id,
+        centro_id: centroDestinoId,
         from_centro_id:
-          rol === "admin" || rol === "jefe_area" || rol === "superadmin"
-            ? sourceMode === "centro"
-              ? sourceCentroId
-              : null
-            : null,
+          rol === "supervisor_terreno"
+            ? myCentroId
+            : rol === "admin" || rol === "jefe_area" || rol === "superadmin"
+              ? sourceMode === "centro"
+                ? sourceCentroId
+                : null
+              : null,
         firma_url: canvasRef.current?.toDataURL() || null,
         items: items.map((i) => ({
           producto_id: i.producto_id,
@@ -685,7 +707,7 @@ export default function EntregaPage() {
       <div>
         <h1 className="text-2xl font-semibold">Entrega de EPP</h1>
         <p className="text-sm text-zinc-500">
-          Selecciona trabajador, confirma EPP desde stock, firma y registra.
+          Selecciona centro destino, luego trabajador, confirma EPP desde stock, firma y registra.
         </p>
       </div>
 
@@ -702,97 +724,139 @@ export default function EntregaPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="rounded-lg border bg-white p-4 space-y-2">
-          <h2 className="font-medium">1) Trabajador</h2>
+        <div className="rounded-lg border bg-white p-4 space-y-3">
+          <h2 className="font-medium">1) Centro de trabajo destino</h2>
           <select
             className="input h-12 text-base"
-            value={trabajadorId}
+            value={centroDestinoId}
             onChange={(e) => {
-              setTrabajadorId(e.target.value);
+              setCentroDestinoId(e.target.value);
               setSuccessOpen(false);
               setSuccessText("");
             }}
           >
-            <option value="">Selecciona trabajador activo…</option>
-            {trabajadores.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.nombre} ({t.rut})
+            <option value="">Selecciona centro…</option>
+            {centros.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
               </option>
             ))}
           </select>
-          <div className="mt-2 text-sm text-zinc-600">
-            <span className="text-zinc-500">Centro:</span>{" "}
-            <span className="font-medium text-zinc-900">{centroNombre}</span>
-          </div>
-          {trabajadores.length === 0 && (
-            <p className="text-xs text-zinc-500">No hay trabajadores activos.</p>
-          )}
-        </div>
 
-        {(rol === "admin" || rol === "jefe_area" || rol === "superadmin") && (
-          <div className="rounded-lg border bg-white p-4 space-y-3">
-            <h2 className="font-medium">2) Origen del stock</h2>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => {
-                  setSourceMode("global");
-                  setSourceCentroId("");
-                }}
-                className={
-                  sourceMode === "global"
-                    ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
-                    : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
-                }
-              >
-                Bodega empresa (stock global)
-              </button>
-
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => setSourceMode("centro")}
-                className={
-                  sourceMode === "centro"
-                    ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
-                    : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
-                }
-              >
-                Stock asignado a un centro
-              </button>
+          <div className="pt-2 space-y-2">
+            <h2 className="font-medium">2) Trabajador</h2>
+            <select
+              className="input h-12 text-base"
+              value={trabajadorId}
+              onChange={(e) => {
+                setTrabajadorId(e.target.value);
+                setSuccessOpen(false);
+                setSuccessText("");
+              }}
+              disabled={!centroDestinoId}
+            >
+              <option value="">Selecciona trabajador activo…</option>
+              {trabajadoresFiltrados.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nombre} ({t.rut})
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 text-sm text-zinc-600">
+              <span className="text-zinc-500">Centro destino:</span>{" "}
+              <span className="font-medium text-zinc-900">{centroDestinoNombre}</span>
             </div>
-
-            {sourceMode === "centro" && (
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">
-                  Centro desde donde se descontará el stock
-                </label>
-                <select
-                  className="input h-12 text-base"
-                  value={sourceCentroId}
-                  disabled={submitting}
-                  onChange={(e) => setSourceCentroId(e.target.value)}
-                >
-                  <option value="">Selecciona centro…</option>
-                  {centrosFuente.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {centroDestinoId && trabajadoresFiltrados.length === 0 && (
+              <p className="text-xs text-zinc-500">No hay trabajadores activos en ese centro.</p>
             )}
           </div>
-        )}
+        </div>
+
+        <div className="rounded-lg border bg-white p-4 space-y-3">
+          <h2 className="font-medium">3) Origen del stock</h2>
+
+          {rol === "supervisor_terreno" ? (
+            <div>
+              <label className="mb-1 block text-xs text-zinc-500">
+                Centro desde donde se descontará el stock
+              </label>
+              <select className="input h-12 text-base" value={sourceCentroId} disabled>
+                <option value="">Selecciona centro…</option>
+                {centrosFuente.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-zinc-500">
+                Como supervisor terreno, el stock se descuenta desde tu centro asignado.
+              </p>
+            </div>
+          ) : rol === "admin" || rol === "jefe_area" || rol === "superadmin" ? (
+            <>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setSourceMode("global");
+                    setSourceCentroId("");
+                  }}
+                  className={
+                    sourceMode === "global"
+                      ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                      : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
+                  }
+                >
+                  Bodega empresa (stock global)
+                </button>
+
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setSourceMode("centro")}
+                  className={
+                    sourceMode === "centro"
+                      ? "rounded border border-sky-600 bg-sky-50 px-3 py-2 text-left text-sm font-medium text-sky-700"
+                      : "rounded border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
+                  }
+                >
+                  Stock asignado a un centro
+                </button>
+              </div>
+
+              {sourceMode === "centro" && (
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">
+                    Centro desde donde se descontará el stock
+                  </label>
+                  <select
+                    className="input h-12 text-base"
+                    value={sourceCentroId}
+                    disabled={submitting}
+                    onChange={(e) => setSourceCentroId(e.target.value)}
+                  >
+                    <option value="">Selecciona centro…</option>
+                    {centrosFuente.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-zinc-600">
+              El stock se descontará desde Inventario Empresa.
+            </div>
+          )}
+        </div>
 
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">
-              {(rol === "admin" || rol === "jefe_area" || rol === "superadmin")
-                ? "3) EPP a entregar"
-                : "2) EPP a entregar"}
+              4) EPP a entregar
             </h2>
             <button
               type="button"
@@ -936,9 +1000,7 @@ export default function EntregaPage() {
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">
-              {(rol === "admin" || rol === "jefe_area" || rol === "superadmin")
-                ? "4) Firma del trabajador"
-                : "3) Firma del trabajador"}
+              5) Firma del trabajador
             </h2>
             <button type="button" onClick={clearFirma} className="rounded border px-3 py-1 text-sm">
               Limpiar
@@ -967,7 +1029,7 @@ export default function EntregaPage() {
           <button
             type="submit"
             className="w-full rounded-xl bg-sky-600 py-4 text-base font-semibold text-white shadow hover:bg-sky-700 disabled:opacity-50"
-            disabled={submitting || stock.length === 0 || !trabajadorId || !firmado || !items.length}
+            disabled={submitting || stock.length === 0 || !centroDestinoId || !trabajadorId || !firmado || !items.length}
           >
             {submitting ? "Registrando…" : "Registrar entrega"}
           </button>
