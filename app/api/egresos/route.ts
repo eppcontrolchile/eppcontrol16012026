@@ -221,7 +221,10 @@ export async function POST(req: NextRequest) {
     }
 
     // centro_id = centro destino (CT del trabajador)
-    // from_centro_id = centro origen del stock (null = bodega empresa)
+    // from_centro_id = centro origen del stock (null = Inventario Empresa)
+    // supervisor_terreno: origen fijo en su CT asignado
+    // admin/jefe_area/bodega/superadmin: origen elegible
+    // solo_entrega: origen fijo en Inventario Empresa
     // Determinar fuente real de descuento según rol
     let fromCentroId: string | null = null;
 
@@ -232,12 +235,16 @@ export async function POST(req: NextRequest) {
           { status: 403 }
         );
       }
-
       fromCentroId = String(usuarioRow.centro_id);
-    } else if (rol === "bodega" || rol === "solo_entrega") {
-      // Siempre descuentan desde Inventario Empresa (global)
+    } else if (rol === "solo_entrega") {
+      // Solo entrega siempre descuenta desde Inventario Empresa (global)
       fromCentroId = null;
-    } else if (rol === "admin" || rol === "jefe_area" || rol === "superadmin") {
+    } else if (
+      rol === "admin" ||
+      rol === "jefe_area" ||
+      rol === "bodega" ||
+      rol === "superadmin"
+    ) {
       // Pueden elegir entre global (null) o stock asignado a un CT.
       // No se exige que el centro origen coincida con el centro destino.
       if (requestedFromCentroId) {

@@ -101,9 +101,16 @@ export default function EntregaPage() {
   const [centros, setCentros] = useState<CentroTrabajo[]>([]);
   const [myCentroId, setMyCentroId] = useState<string | null>(null);
 
-  const canMoveStock = useMemo(() => {
-    return rol === "admin" || rol === "bodega" || rol === "superadmin";
+  const canChooseStockOrigin = useMemo(() => {
+    return (
+      rol === "admin" ||
+      rol === "jefe_area" ||
+      rol === "bodega" ||
+      rol === "superadmin"
+    );
   }, [rol]);
+
+  const canMoveStock = canChooseStockOrigin;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -235,6 +242,7 @@ export default function EntregaPage() {
         } else if (
           userRole !== "admin" &&
           userRole !== "jefe_area" &&
+          userRole !== "bodega" &&
           userRole !== "superadmin"
         ) {
           setSourceMode("global");
@@ -596,7 +604,7 @@ export default function EntregaPage() {
       return;
     }
 
-    if ((rol === "admin" || rol === "jefe_area" || rol === "superadmin") && sourceMode === "centro" && !sourceCentroId) {
+    if (canChooseStockOrigin && sourceMode === "centro" && !sourceCentroId) {
       setError("Debes seleccionar el centro desde donde se descontará el stock.");
       return;
     }
@@ -639,7 +647,7 @@ export default function EntregaPage() {
         from_centro_id:
           rol === "supervisor_terreno"
             ? myCentroId
-            : rol === "admin" || rol === "jefe_area" || rol === "superadmin"
+            : canChooseStockOrigin
               ? sourceMode === "centro"
                 ? sourceCentroId
                 : null
@@ -816,7 +824,7 @@ export default function EntregaPage() {
                 Como supervisor terreno, el stock se descuenta desde tu centro asignado.
               </p>
             </div>
-          ) : rol === "admin" || rol === "jefe_area" || rol === "superadmin" ? (
+          ) : canChooseStockOrigin ? (
             <>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button

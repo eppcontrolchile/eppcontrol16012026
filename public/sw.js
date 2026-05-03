@@ -1,7 +1,7 @@
 // public/sw.js
 // 🔁 IMPORTANT: bump this version on each deploy that changes frontend bundles/UI.
 // This forces a new cache namespace and guarantees old cached assets are deleted on activate.
-const SW_VERSION = "v6";
+const SW_VERSION = "v7";
 const CACHE = `epp-entregas-${SW_VERSION}`;
 
 // Solo assets estáticos propios (NO HTML, NO /_next)
@@ -99,7 +99,7 @@ self.addEventListener("fetch", (event) => {
     <p>No pudimos cargar esta página porque no hay internet.</p>
     <p>Cuando vuelvas a tener señal, toca “Reintentar”.</p>
     <button onclick="location.reload()">Reintentar</button>
-    <p style="margin-top:12px"><a href="/m/entrega">Ir a Entrega</a></p>
+    <p style="margin-top:12px"><a href="/m">Ir a Operaciones</a></p>
   </div>
 </body>
 </html>`;

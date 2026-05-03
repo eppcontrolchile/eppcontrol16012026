@@ -43,7 +43,10 @@ export default async function MRoot() {
   }
 
   const canMoveStock =
-    rol === "admin" || rol === "bodega" || rol === "superadmin";
+    rol === "admin" ||
+    rol === "jefe_area" ||
+    rol === "bodega" ||
+    rol === "superadmin";
 
   return (
     <div className="space-y-4">
