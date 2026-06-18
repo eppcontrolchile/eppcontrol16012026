@@ -16,6 +16,7 @@ type EmpresaConfig = {
   frecuencia_alertas: "diaria" | "semanal" | null;
 
   email_gerencia: string | null;
+  correo_registro_entregas: string | null;
 };
 
 function isEmail(v: string) {
@@ -41,6 +42,7 @@ export default function ConfiguracionEmpresaPage() {
   const [frecuencia, setFrecuencia] = useState<"diaria" | "semanal">("diaria");
   const [correoAlertas, setCorreoAlertas] = useState("");
   const [correoGerencia, setCorreoGerencia] = useState("");
+  const [correoRegistroEntregas, setCorreoRegistroEntregas] = useState("");
 
   const planLabel = empresa?.plan_tipo === "advanced" ? "Plan Avanzado" : "Plan Estándar";
 
@@ -70,6 +72,7 @@ export default function ConfiguracionEmpresaPage() {
         setFrecuencia((e.frecuencia_alertas as any) || "diaria");
         setCorreoAlertas(e.email_alertas ?? "");
         setCorreoGerencia(e.email_gerencia ?? "");
+        setCorreoRegistroEntregas(e.correo_registro_entregas ?? "");
       } catch (err: any) {
         if (!cancelled) setError(err?.message ?? "Error");
       } finally {
@@ -143,6 +146,11 @@ export default function ConfiguracionEmpresaPage() {
       return;
     }
 
+    if (!isEmail(correoRegistroEntregas)) {
+      setError("Correo de registro de entregas no válido");
+      return;
+    }
+
     if (empresa?.plan_tipo === "standard" && !isEmail(correoGerencia)) {
       setError("Correo de gerencia no válido");
       return;
@@ -169,6 +177,8 @@ export default function ConfiguracionEmpresaPage() {
         alertas_activas: alertasActivas,
         stock_critico_activo: stockCriticoActivo,
         frecuencia_alertas: frecuencia,
+        correo_registro_entregas:
+          correoRegistroEntregas.trim() || null,
       };
 
       // Si el usuario quitó el logo (sin archivo y sin URL), persistimos null vía PATCH
@@ -390,6 +400,25 @@ export default function ConfiguracionEmpresaPage() {
               </div>
             </>
           )}
+        </div>
+
+        <div className="rounded-lg border bg-white p-4 space-y-2">
+          <h2 className="font-medium">Registro de entregas</h2>
+
+          <p className="text-sm text-zinc-600">
+            Si se configura un correo, todas las entregas de EPP enviarán una copia automática a esta dirección.
+          </p>
+
+          <label className="mb-1 block text-sm font-medium">
+            Correo de registro
+          </label>
+
+          <input
+            className="input"
+            value={correoRegistroEntregas}
+            onChange={(e) => setCorreoRegistroEntregas(e.target.value)}
+            placeholder="prevencion@empresa.cl"
+          />
         </div>
 
         {error && (

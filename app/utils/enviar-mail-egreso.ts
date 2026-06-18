@@ -6,9 +6,11 @@ import { Resend } from "resend";
 
 function getResend() {
   const apiKey = process.env.RESEND_API_KEY;
+
   if (!apiKey) {
     throw new Error("RESEND_API_KEY no configurada");
   }
+
   return new Resend(apiKey);
 }
 
@@ -25,6 +27,7 @@ type TrabajadorMail = {
 /**
  * Envía correos de comprobante de entrega de EPP
  * - Admin de la empresa (siempre)
+ * - Correo de registro empresa (opcional)
  * - Trabajador (si tiene correo)
  * - Incluye LINK al PDF (no adjuntos)
  *
@@ -35,8 +38,15 @@ export async function enviarCorreosEgreso(params: {
   empresa: EmpresaMail;
   trabajador: TrabajadorMail;
   emailAdmin: string;
+  correoRegistroEntregas?: string | null;
 }) {
-  const { pdf_url, empresa, trabajador, emailAdmin } = params;
+  const {
+    pdf_url,
+    empresa,
+    trabajador,
+    emailAdmin,
+    correoRegistroEntregas,
+  } = params;
 
   if (!pdf_url) {
     throw new Error("pdf_url no recibido para envío de correos");
@@ -57,14 +67,30 @@ export async function enviarCorreosEgreso(params: {
     `${pdf_url}\n\n` +
     `Documento generado automáticamente por EPP Control.`;
 
-  const cuerpoHtml = `<p>Se ha registrado una entrega de EPP.</p>
-<p><strong>Empresa:</strong> ${empresa.nombre}</p>
-<p><strong>Trabajador:</strong> ${trabajador.nombre} (${trabajador.rut})</p>
-<p><a href="${pdf_url}" target="_blank">Descargar comprobante PDF</a></p>
-<p><em>EPP Control</em></p>`;
+  const cuerpoHtml = `
+    <p>Se ha registrado una entrega de EPP.</p>
+
+    <p>
+      <strong>Empresa:</strong> ${empresa.nombre}
+    </p>
+
+    <p>
+      <strong>Trabajador:</strong>
+      ${trabajador.nombre} (${trabajador.rut})
+    </p>
+
+    <p>
+      <a href="${pdf_url}" target="_blank">
+        Descargar comprobante PDF
+      </a>
+    </p>
+
+    <p><em>EPP Control</em></p>
+  `;
 
   try {
     const resend = getResend();
+
     // 📩 Correo al administrador
     await resend.emails.send({
       from: "EPP Control <no-reply@eppcontrol.cl>",
@@ -73,6 +99,17 @@ export async function enviarCorreosEgreso(params: {
       text: cuerpoTexto,
       html: cuerpoHtml,
     });
+
+    // 📩 Correo de registro empresa (opcional)
+    if (correoRegistroEntregas) {
+      await resend.emails.send({
+        from: "EPP Control <no-reply@eppcontrol.cl>",
+        to: correoRegistroEntregas,
+        subject,
+        text: cuerpoTexto,
+        html: cuerpoHtml,
+      });
+    }
 
     // 📩 Correo al trabajador (si existe)
     if (trabajador.email) {

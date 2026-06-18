@@ -79,7 +79,7 @@ export async function GET() {
     const { data: empresa, error: eerr } = await supabaseAdmin
       .from("empresas")
       .select(
-        "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia"
+        "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia, correo_registro_entregas"
       )
       .eq("id", urow.empresa_id)
       .single();
@@ -171,18 +171,32 @@ export async function PATCH(req: Request) {
       patch.logo_url = v || null;
     }
 
-    // alertas stock
-    if ("email_alertas" in body) {
-      const v = String(body.email_alertas ?? "").trim();
-      if (v && !isValidEmail(v)) {
-        return NextResponse.json({ error: "email_alertas inválido" }, { status: 400 });
+    // alertas stock y entrega epp
+      if ("email_alertas" in body) {
+        const v = String(body.email_alertas ?? "").trim();
+        if (v && !isValidEmail(v)) {
+          return NextResponse.json({ error: "email_alertas inválido" }, { status: 400 });
+        }
+        patch.email_alertas = v || null;
       }
-      patch.email_alertas = v || null;
-    }
 
-    if ("alertas_activas" in body) {
-      patch.alertas_activas = Boolean(body.alertas_activas);
-    }
+      if ("correo_registro_entregas" in body) {
+        const v = String(body.correo_registro_entregas ?? "").trim();
+
+        if (v && !isValidEmail(v)) {
+          return NextResponse.json(
+            { error: "correo_registro_entregas inválido" },
+            { status: 400 }
+          );
+        }
+
+        patch.correo_registro_entregas = v || null;
+      }
+
+      if ("alertas_activas" in body) {
+        patch.alertas_activas = Boolean(body.alertas_activas);
+      }
+
 
     if ("stock_critico_activo" in body) {
       patch.stock_critico_activo = Boolean(body.stock_critico_activo);
@@ -211,7 +225,7 @@ export async function PATCH(req: Request) {
       const { data: empresaActual, error: eerr } = await supabaseAdmin
         .from("empresas")
         .select(
-          "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia"
+          "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia, correo_registro_entregas"
         )
         .eq("id", urow.empresa_id)
         .single();
@@ -228,7 +242,7 @@ export async function PATCH(req: Request) {
       .update(patch)
       .eq("id", urow.empresa_id)
       .select(
-        "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia"
+        "id,nombre,rut,plan_tipo,logo_url,email_alertas,alertas_activas,stock_critico_activo,frecuencia_alertas,email_gerencia, correo_registro_entregas"
       )
       .single();
 
