@@ -428,9 +428,10 @@ export async function POST(req: NextRequest) {
     let pdfPath: string | null = null;
 
     // Se usan también para correos (solo si el PDF se genera OK)
-    let empresaRel: any = null;
-    let trabajadorRel: any = null;
-    let centroRel: any = null;
+      let empresaRel: any = null;
+      let trabajadorRel: any = null;
+      let centroRel: any = null;
+      let correoRegistroEntregas: string | null = null;
 
     try {
       // data debe traer: entrega_id, total_unidades, costo_total_iva
@@ -470,6 +471,19 @@ export async function POST(req: NextRequest) {
       empresaRel = Array.isArray((entregaData as any).empresas)
         ? (entregaData as any).empresas[0]
         : (entregaData as any).empresas;
+        
+        try {
+          const { data: empresaCfg } = await supabase
+            .from("empresas")
+            .select("correo_registro_entregas")
+            .eq("id", empresa_id)
+            .maybeSingle();
+
+          correoRegistroEntregas =
+            empresaCfg?.correo_registro_entregas?.trim() || null;
+        } catch (e) {
+          console.error("No se pudo leer correo_registro_entregas", e);
+        }
 
       trabajadorRel = Array.isArray((entregaData as any).trabajadores)
         ? (entregaData as any).trabajadores[0]
@@ -604,9 +618,27 @@ export async function POST(req: NextRequest) {
             emailAdmin = usuarioMail?.email ?? null;
           }
 
+          console.log("EMAIL DEBUG", {
+            entregaId,
+            emailAdmin,
+            correoRegistroEntregas,
+            trabajadorEmail: trabajadorRel?.email,
+            empresa: empresaRel?.nombre,
+            pdfPath,
+          });
+
           if (!emailAdmin) {
-            console.warn("EMAIL SKIPPED: admin email missing", { entregaId, pdfPath });
+            console.warn("EMAIL SKIPPED: admin email missing", {
+              entregaId,
+              pdfPath,
+            });
           } else {
+            console.log("EMAIL SEND START", {
+              entregaId,
+              emailAdmin,
+              correoRegistroEntregas,
+              trabajadorEmail: trabajadorRel?.email,
+            });
             enviarCorreosEgreso({
               pdf_url: pdfPath,
               empresa: {
@@ -618,6 +650,7 @@ export async function POST(req: NextRequest) {
                 email: trabajadorRel?.email ?? null,
               },
               emailAdmin,
+              correoRegistroEntregas,
             }).catch((err) => {
               console.error("ERROR ENVÍO CORREOS EGRESO (non-blocking):", {
                 entregaId,
@@ -627,11 +660,11 @@ export async function POST(req: NextRequest) {
             });
           }
         } catch (mailError) {
-          // No rompe el flujo principal del egreso
           console.error("ERROR ENVÍO CORREOS EGRESO:", mailError);
         }
       }
     }
+       
 
     // ─────────────────────────────────────────────
     // 3️⃣ Respuesta
